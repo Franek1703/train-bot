@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { chromium, type Locator, type Page } from 'playwright';
+import { chromium, firefox, type Browser, type BrowserType, type Locator, type Page } from 'playwright';
 import type { Watch } from '@prisma/client';
 import { env } from '../config/env.js';
 import { extractSeatAssignment, resultFromStatus } from './parser.js';
@@ -19,8 +19,12 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
       headless: env.HEADLESS,
     });
 
-    const browser = await chromium.launch({ headless: env.HEADLESS });
-    const page = await browser.newPage();
+    const browser = await launchIntercityBrowser();
+    const context = await browser.newContext({
+      locale: 'pl-PL',
+      timezoneId: env.TIMEZONE,
+    });
+    const page = await context.newPage();
 
     try {
       if (!watch.journeyUrl) {
@@ -130,35 +134,24 @@ async function selectConnection(page: Page, watch: Watch): Promise<void> {
     throw new Error('trainNumber and departureTime are required to select a search result');
   }
 
-  const trainNumberPattern = trainNumberRegex(watch.trainNumber);
-  const cards = page
-    .locator('article, li, section, div')
-    .filter({ hasText: watch.departureTime })
-    .filter({ hasText: trainNumberPattern })
-    .filter({ hasText: /kup bilet/i });
+  const departurePattern = new RegExp(
+    `kup bilet.*${watch.departureTime.replace(':', '\\:')}`,
+    'i',
+  );
+  const buyButton = page.getByRole('button', { name: departurePattern }).first();
+  const buyButtonCount = await buyButton.count();
 
-  const count = await cards.count();
   logInfo('Matching search result cards found', {
     watchId: watch.id,
     trainNumber: watch.trainNumber,
     departureTime: watch.departureTime,
-    count,
+    count: buyButtonCount,
   });
 
-  if (count === 0) {
+  if (buyButtonCount === 0) {
     throw new Error(
       `Could not find train card for ${watch.trainNumber} at ${watch.departureTime}`,
     );
-  }
-
-  const card = cards.first();
-  const buyButton = card
-    .getByRole('button', { name: /kup bilet/i })
-    .or(card.locator('button:has-text("KUP BILET")'))
-    .first();
-
-  if ((await buyButton.count()) === 0) {
-    throw new Error('Matching train card was found, but KUP BILET button was not found');
   }
 
   logInfo('Clicking buy ticket button on matching train card', {
@@ -344,6 +337,7 @@ async function waitForText(page: Page, pattern: RegExp, watchId: string): Promis
 }
 
 async function waitForSearchResults(page: Page, watch: Watch): Promise<void> {
+  const loadingPattern = /Wyszukujemy|Szukamy połączeń|Trwa wyszukiwanie/i;
   const resultsPattern =
     /Lista połączeń|Kup bilet|Brak połączeń|Nie znaleziono|Nie znaleźliśmy/i;
 
@@ -355,6 +349,8 @@ async function waitForSearchResults(page: Page, watch: Watch): Promise<void> {
 
   try {
     await page.getByText(resultsPattern).first().waitFor({ timeout: 120_000 });
+    await page.getByText(loadingPattern).first().waitFor({ state: 'hidden', timeout: 120_000 });
+    await page.waitForTimeout(1_000);
   } catch (error) {
     const pageState = await getPageState(page);
     throw new Error(
@@ -541,4 +537,24 @@ function logError(message: string, context: Record<string, unknown> = {}): void 
 
 export function trainNumberRegex(trainNumber: string): RegExp {
   return new RegExp(trainNumber.trim().replace(/\s+/g, '\\s*'), 'i');
+}
+
+async function launchIntercityBrowser(): Promise<Browser> {
+  const browserType = resolveIntercityBrowserType();
+  logInfo('Launching browser for Intercity check', {
+    browser: browserType.name(),
+    headless: env.HEADLESS,
+  });
+
+  return browserType.launch({ headless: env.HEADLESS });
+}
+
+function resolveIntercityBrowserType(): BrowserType {
+  // Intercity blocks Chromium headless navigation (page stays on about:blank).
+  // Firefox works reliably in both headless and headed mode.
+  if (env.HEADLESS) {
+    return firefox;
+  }
+
+  return chromium;
 }
