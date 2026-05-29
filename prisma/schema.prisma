@@ -1,0 +1,76 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Watch {
+  id                   String              @id @default(uuid()) @db.Uuid
+  configKey            String              @unique @map("config_key")
+  origin               String
+  destination          String
+  travelDate           DateTime            @map("travel_date") @db.Date
+  trainNumber          String?             @map("train_number")
+  departureTime        String?             @map("departure_time")
+  travelClass          Int                 @default(2) @map("travel_class")
+  passengers           Int                 @default(1)
+  seatRequired         Boolean             @default(true) @map("seat_required")
+  checkIntervalMinutes Int                 @default(5) @map("check_interval_minutes")
+  active               Boolean             @default(true)
+  notificationChannel  String              @default("email") @map("notification_channel")
+  notificationTarget   String?             @map("notification_target")
+  lastKnownStatus      String?             @map("last_known_status")
+  lastCheckedAt        DateTime?           @map("last_checked_at")
+  lastNotifiedAt       DateTime?           @map("last_notified_at")
+  consecutiveErrors    Int                 @default(0) @map("consecutive_errors")
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+  availabilityChecks   AvailabilityCheck[]
+  notifications        Notification[]
+
+  @@map("watches")
+}
+
+model AvailabilityCheck {
+  id             String         @id @default(uuid()) @db.Uuid
+  watchId        String         @map("watch_id") @db.Uuid
+  checkedAt      DateTime       @default(now()) @map("checked_at")
+  status         String
+  available      Boolean
+  seatAvailable  Boolean?       @map("seat_available")
+  price          String?
+  purchaseUrl    String?        @map("purchase_url")
+  trainNumber    String?        @map("train_number")
+  departureTime  String?        @map("departure_time")
+  arrivalTime    String?        @map("arrival_time")
+  rawStatus      String?        @map("raw_status")
+  rawPayload     Json?          @map("raw_payload")
+  errorMessage   String?        @map("error_message")
+  screenshotPath String?        @map("screenshot_path")
+  durationMs     Int?           @map("duration_ms")
+  watch          Watch          @relation(fields: [watchId], references: [id], onDelete: Cascade)
+  notifications  Notification[]
+
+  @@index([watchId, checkedAt])
+  @@map("availability_checks")
+}
+
+model Notification {
+  id                  String             @id @default(uuid()) @db.Uuid
+  watchId             String             @map("watch_id") @db.Uuid
+  availabilityCheckId String?            @map("availability_check_id") @db.Uuid
+  sentAt              DateTime           @default(now()) @map("sent_at")
+  channel             String
+  target              String?
+  message             String
+  status              String             @default("sent")
+  errorMessage        String?            @map("error_message")
+  watch               Watch              @relation(fields: [watchId], references: [id], onDelete: Cascade)
+  availabilityCheck   AvailabilityCheck? @relation(fields: [availabilityCheckId], references: [id], onDelete: SetNull)
+
+  @@index([watchId, sentAt])
+  @@map("notifications")
+}
