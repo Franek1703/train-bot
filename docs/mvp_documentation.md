@@ -74,7 +74,7 @@ Each watched train has its own independent state, so notifications are deduplica
 The project should support:
 
 * Monitoring one or many selected PKP Intercity connections at the same time.
-* Opening a direct PKP Intercity journey URL for each watched train.
+* Opening a reusable PKP Intercity search URL for each watched train.
 * Checking whether an assigned seat appears on the summary page.
 * Adding the ticket to the cart when an assigned seat is detected.
 * Sending notifications when availability changes.
@@ -228,7 +228,7 @@ Example:
 ```json
 {
   "id": "watch_001",
-  "journeyUrl": "https://ebilet.intercity.pl/wybormiejsc?...",
+  "searchUrl": "https://ebilet.intercity.pl/wyszukiwanie?...",
   "origin": "Warszawa Centralna",
   "destination": "Gdańsk Główny",
   "date": "2026-06-15",
@@ -393,15 +393,18 @@ Example result:
 
 This is the most realistic MVP strategy.
 
-The bot behaves like a normal user, starting from a direct Intercity journey URL:
+The bot behaves like a normal user, starting from a reusable Intercity search URL:
 
-1. Opens the configured `/wybormiejsc` journey URL.
-2. Continues to payment.
-3. Logs in if prompted.
-4. Waits for the summary page.
-5. Checks whether an assigned seat is visible.
-6. Adds the ticket to the cart.
-7. Sends a notification if available.
+1. Opens the configured `/wyszukiwanie` search URL.
+2. Finds the selected train by train number and departure time.
+3. Clicks `Kup bilet`.
+4. Selects the configured travel class.
+5. Continues to payment.
+6. Logs in if prompted.
+7. Waits for the summary page.
+8. Checks whether an assigned seat is visible.
+9. Adds the ticket to the cart.
+10. Sends a notification if available.
 
 Advantages:
 
@@ -431,11 +434,12 @@ For MVP, use **Playwright browser automation**.
 ```text
 1. Load all active watches from database.
 2. For each due watch:
-   1. Open configured PKP Intercity journey URL.
-   2. Continue through the payment/login gate.
-   3. Locate the summary page.
-   4. Check assigned seat text.
-   5. Add the ticket to the cart.
+   1. Open configured PKP Intercity search URL.
+   2. Select the matching train and class.
+   3. Continue through the payment/login gate.
+   4. Locate the summary page.
+   5. Check assigned seat text.
+   6. Add the ticket to the cart.
    7. Normalize result.
    8. Save check result.
    9. Compare with previous known status.
@@ -663,7 +667,7 @@ A simple JSON configuration can be used for MVP before building a full UI.
   "checks": [
     {
       "id": "poznan-warszawa-ic-146",
-      "journeyUrl": "https://ebilet.intercity.pl/wybormiejsc?dwyj=2026-05-31&swyj=5100081&sprzy=5100067&time=11%3A00&przy=0&sprzez=&ticket100=1010&ticket50=&polbez=0",
+      "searchUrl": "https://ebilet.intercity.pl/wyszukiwanie?dwyj=2026-05-31&swyj=5100081&sprzy=5100067&time=11%3A00&przy=0&sprzez=&ticket100=1010&ticket50=&polbez=0",
       "origin": "Poznań Główny",
       "destination": "Warszawa Zachodnia",
       "date": "2026-05-31",
@@ -1258,7 +1262,7 @@ Example future CLI commands:
 ## 25. Example CLI Commands
 
 For MVP, watches are managed in `config/watches.json`. Each watch must include
-the exact `journeyUrl` copied from the PKP Intercity journey page.
+the reusable `searchUrl` copied from the PKP Intercity search results page.
 
 Resume a watch:
 

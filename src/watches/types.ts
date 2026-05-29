@@ -1,6 +1,6 @@
 export interface WatchConfig {
   id: string;
-  journeyUrl: string;
+  searchUrl: string;
   origin: string;
   destination: string;
   date: string;

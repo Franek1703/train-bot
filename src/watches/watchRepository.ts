@@ -16,7 +16,7 @@ export async function syncConfiguredWatches(watches: WatchConfig[]): Promise<Wat
         where: { configKey: watch.id },
         create: {
           configKey: watch.id,
-          journeyUrl: watch.journeyUrl,
+          journeyUrl: watch.searchUrl,
           origin: watch.origin,
           destination: watch.destination,
           travelDate: toTravelDate(watch.date),
@@ -30,7 +30,7 @@ export async function syncConfiguredWatches(watches: WatchConfig[]): Promise<Wat
           notificationChannel: 'email',
         },
         update: {
-          journeyUrl: watch.journeyUrl,
+          journeyUrl: watch.searchUrl,
           origin: watch.origin,
           destination: watch.destination,
           travelDate: toTravelDate(watch.date),

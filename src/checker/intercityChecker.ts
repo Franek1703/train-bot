@@ -9,13 +9,13 @@ import type { AvailabilityChecker, AvailabilityResult } from './types.js';
 export class PlaywrightIntercityChecker implements AvailabilityChecker {
   async checkAvailability(watch: Watch): Promise<AvailabilityResult> {
     const startedAt = Date.now();
-    logInfo('Starting direct journey availability check', {
+    logInfo('Starting search URL availability check', {
       watchId: watch.id,
       trainNumber: watch.trainNumber,
       origin: watch.origin,
       destination: watch.destination,
       travelDate: watch.travelDate.toISOString().slice(0, 10),
-      journeyUrl: watch.journeyUrl,
+      searchUrl: watch.journeyUrl,
       headless: env.HEADLESS,
     });
 
@@ -24,11 +24,13 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
 
     try {
       if (!watch.journeyUrl) {
-        throw new Error('Watch is missing journeyUrl');
+        throw new Error('Watch is missing stored search URL');
       }
 
-      await openJourneyUrl(page, watch);
+      await openSearchUrl(page, watch);
       await acceptCookiesIfVisible(page);
+      await selectConnection(page, watch);
+      await selectTravelClass(page, watch);
       await proceedToSummary(page, watch);
       await loginIfRequired(page, watch);
       await waitForSummary(page, watch);
@@ -90,26 +92,101 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
   }
 }
 
-async function openJourneyUrl(page: Page, watch: Watch): Promise<void> {
-  logInfo('Opening Intercity journey URL', {
+async function openSearchUrl(page: Page, watch: Watch): Promise<void> {
+  logInfo('Opening Intercity search URL', {
     watchId: watch.id,
-    journeyUrl: watch.journeyUrl,
+    searchUrl: watch.journeyUrl,
   });
 
   await page.goto(watch.journeyUrl!, { waitUntil: 'commit', timeout: 45_000 });
   await page.waitForLoadState('domcontentloaded', { timeout: 30_000 }).catch((error) => {
-    logError('Journey page did not reach domcontentloaded before timeout', {
+    logError('Search page did not reach domcontentloaded before timeout', {
       watchId: watch.id,
       error: error instanceof Error ? error.message : String(error),
     });
   });
   await page.waitForTimeout(2_000);
 
-  logInfo('Journey URL opened', {
+  logInfo('Search URL opened', {
     watchId: watch.id,
     currentUrl: page.url(),
     title: await page.title().catch(() => undefined),
   });
+}
+
+async function selectConnection(page: Page, watch: Watch): Promise<void> {
+  await waitForText(page, /Lista połączeń|Kup bilet/i, watch.id);
+
+  if (!watch.trainNumber || !watch.departureTime) {
+    throw new Error('trainNumber and departureTime are required to select a search result');
+  }
+
+  const trainNumberPattern = trainNumberRegex(watch.trainNumber);
+  const cards = page
+    .locator('article, li, section, div')
+    .filter({ hasText: watch.departureTime })
+    .filter({ hasText: trainNumberPattern })
+    .filter({ hasText: /kup bilet/i });
+
+  const count = await cards.count();
+  logInfo('Matching search result cards found', {
+    watchId: watch.id,
+    trainNumber: watch.trainNumber,
+    departureTime: watch.departureTime,
+    count,
+  });
+
+  if (count === 0) {
+    throw new Error(
+      `Could not find train card for ${watch.trainNumber} at ${watch.departureTime}`,
+    );
+  }
+
+  const card = cards.first();
+  const buyButton = card
+    .getByRole('button', { name: /kup bilet/i })
+    .or(card.locator('button:has-text("KUP BILET")'))
+    .first();
+
+  if ((await buyButton.count()) === 0) {
+    throw new Error('Matching train card was found, but KUP BILET button was not found');
+  }
+
+  logInfo('Clicking buy ticket button on matching train card', {
+    watchId: watch.id,
+    trainNumber: watch.trainNumber,
+    departureTime: watch.departureTime,
+  });
+  await buyButton.scrollIntoViewIfNeeded();
+  await buyButton.click({ timeout: 10_000 });
+  await page.waitForTimeout(2_000);
+}
+
+async function selectTravelClass(page: Page, watch: Watch): Promise<void> {
+  const classLabel = watch.travelClass === 1 ? /wybierz 1 klasę/i : /wybierz 2 klasę/i;
+  await waitForText(page, /Wybierz 1 klasę|Wybierz 2 klasę|Twoja podróż/i, watch.id);
+
+  if (await page.getByText(/Twoja podróż/i).first().count()) {
+    logInfo('Travel class already selected', { watchId: watch.id });
+    return;
+  }
+
+  const classButton = page
+    .getByRole('button', { name: classLabel })
+    .or(page.locator(`button:has-text("WYBIERZ ${watch.travelClass} KLASĘ")`))
+    .first();
+
+  if ((await classButton.count()) === 0) {
+    throw new Error(`Could not find button for travel class ${watch.travelClass}`);
+  }
+
+  logInfo('Selecting travel class', {
+    watchId: watch.id,
+    travelClass: watch.travelClass,
+  });
+  await classButton.scrollIntoViewIfNeeded();
+  await classButton.click({ timeout: 10_000 });
+  await page.waitForTimeout(2_000);
 }
 
 async function acceptCookiesIfVisible(page: Page): Promise<void> {
@@ -285,4 +362,8 @@ function logInfo(message: string, context: Record<string, unknown> = {}): void {
 
 function logError(message: string, context: Record<string, unknown> = {}): void {
   console.error(JSON.stringify({ level: 'error', message, ...context }));
+}
+
+export function trainNumberRegex(trainNumber: string): RegExp {
+  return new RegExp(trainNumber.trim().replace(/\s+/g, '\\s*'), 'i');
 }

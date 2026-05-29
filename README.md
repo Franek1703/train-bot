@@ -2,9 +2,10 @@
 
 Private PKP Intercity seat availability monitor.
 
-The MVP watches configured PKP Intercity journey URLs, checks whether a seat is
-assigned on the summary page, adds the ticket to the cart, and sends a Resend
-email alert so the user can finish payment manually.
+The MVP watches configured PKP Intercity search URLs, selects the matching train
+and class, checks whether a seat is assigned on the summary page, adds the
+ticket to the cart, and sends a Resend email alert so the user can finish
+payment manually.
 
 This project does not complete payment, bypass CAPTCHA, or automatically buy the
 ticket.
@@ -59,7 +60,7 @@ Create `config/watches.json` from `config/watches.example.json`.
   "checks": [
     {
       "id": "poznan-warszawa-ic-146",
-      "journeyUrl": "https://ebilet.intercity.pl/wybormiejsc?dwyj=2026-05-31&swyj=5100081&sprzy=5100067&time=11%3A00&przy=0&sprzez=&ticket100=1010&ticket50=&polbez=0",
+      "searchUrl": "https://ebilet.intercity.pl/wyszukiwanie?dwyj=2026-05-31&swyj=5100081&sprzy=5100067&time=11%3A00&przy=0&sprzez=&ticket100=1010&ticket50=&polbez=0",
       "origin": "Poznań Główny",
       "destination": "Warszawa Zachodnia",
       "date": "2026-05-31",
