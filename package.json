@@ -1,0 +1,39 @@
+{
+  "name": "train-bot",
+  "version": "0.1.0",
+  "description": "Private PKP Intercity seat availability monitor with Resend email notifications.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "db:migrate": "prisma migrate dev",
+    "check:once": "tsx src/checkOnce.ts",
+    "notify:test": "tsx src/notifyTest.ts",
+    "prisma:generate": "prisma generate"
+  },
+  "keywords": [
+    "pkp",
+    "intercity",
+    "seat-monitor",
+    "playwright",
+    "resend"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "dotenv": "^16.4.7",
+    "p-limit": "^6.2.0",
+    "playwright": "^1.49.1",
+    "resend": "^4.0.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "prisma": "^5.22.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
