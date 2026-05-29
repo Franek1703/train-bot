@@ -18,6 +18,10 @@ const envSchema = z.object({
     .string()
     .default('true')
     .transform((value) => value.toLowerCase() === 'true'),
+  SAVE_SCREENSHOTS: z
+    .string()
+    .default('false')
+    .transform((value) => value.toLowerCase() === 'true'),
   SCREENSHOTS_DIR: z.string().default('./screenshots'),
 });
 

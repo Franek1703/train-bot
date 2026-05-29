@@ -33,7 +33,7 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
 
       await openSearchUrl(page, watch);
       await acceptCookiesIfVisible(page);
-      await selectConnection(page, watch);
+      const listScreenshotPath = await selectConnection(page, watch);
       await selectTravelClass(page, watch);
       await proceedToSummary(page, watch);
       await loginIfRequired(page, watch);
@@ -53,7 +53,8 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
           departureTime: watch.departureTime ?? undefined,
           purchaseUrl: page.url(),
           rawStatus: 'No assigned seat detected on summary page',
-          rawPayload: { currentUrl: page.url() },
+          rawPayload: { currentUrl: page.url(), listScreenshotPath },
+          screenshotPath: listScreenshotPath,
           durationMs: Date.now() - startedAt,
         });
       }
@@ -70,7 +71,8 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
         departureTime: watch.departureTime ?? undefined,
         purchaseUrl: page.url(),
         rawStatus: seatAssignment,
-        rawPayload: { seatAssignment, currentUrl: page.url() },
+        rawPayload: { seatAssignment, currentUrl: page.url(), listScreenshotPath },
+        screenshotPath: listScreenshotPath,
         durationMs: Date.now() - startedAt,
       });
     } catch (error) {
@@ -127,7 +129,7 @@ async function openSearchUrl(page: Page, watch: Watch): Promise<void> {
   }
 }
 
-async function selectConnection(page: Page, watch: Watch): Promise<void> {
+async function selectConnection(page: Page, watch: Watch): Promise<string | undefined> {
   await waitForSearchResults(page, watch);
 
   if (!watch.trainNumber || !watch.departureTime) {
@@ -154,14 +156,19 @@ async function selectConnection(page: Page, watch: Watch): Promise<void> {
     );
   }
 
+  await buyButton.scrollIntoViewIfNeeded();
+  const listScreenshotPath = await savePageScreenshot(page, watch.id, 'list');
+
   logInfo('Clicking buy ticket button on matching train card', {
     watchId: watch.id,
     trainNumber: watch.trainNumber,
     departureTime: watch.departureTime,
+    listScreenshotPath,
   });
-  await buyButton.scrollIntoViewIfNeeded();
   await buyButton.click({ timeout: 10_000 });
   await page.waitForTimeout(2_000);
+
+  return listScreenshotPath;
 }
 
 async function selectTravelClass(page: Page, watch: Watch): Promise<void> {
@@ -446,11 +453,38 @@ interface FailureDiagnostic {
   pageState: PageState;
 }
 
+async function savePageScreenshot(
+  page: Page,
+  watchId: string,
+  label: string,
+): Promise<string | undefined> {
+  if (!env.SAVE_SCREENSHOTS) {
+    return undefined;
+  }
+
+  await mkdir(env.SCREENSHOTS_DIR, { recursive: true });
+  const screenshotPath = path.join(env.SCREENSHOTS_DIR, `${label}-${watchId}-${Date.now()}.png`);
+  const saved = await trySaveScreenshot(page, screenshotPath, true, []);
+
+  if (!saved) {
+    logError('Could not save page screenshot', { watchId, label, screenshotPath });
+    return undefined;
+  }
+
+  logInfo('Saved page screenshot', { watchId, label, screenshotPath });
+  return screenshotPath;
+}
+
 async function captureFailureDiagnostic(page: Page, watchId: string): Promise<FailureDiagnostic> {
+  const pageState = await getPageState(page);
+
+  if (!env.SAVE_SCREENSHOTS) {
+    return { pageState };
+  }
+
   await mkdir(env.SCREENSHOTS_DIR, { recursive: true });
   await stopPageLoading(page, watchId);
 
-  const pageState = await getPageState(page);
   const timestamp = Date.now();
   const screenshotPath = path.join(env.SCREENSHOTS_DIR, `error-${watchId}-${timestamp}.png`);
   const screenshotErrors: string[] = [];
