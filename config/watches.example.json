@@ -1,0 +1,17 @@
+{
+  "checks": [
+    {
+      "id": "warszawa-gdansk-eip-3500",
+      "origin": "Warszawa Centralna",
+      "destination": "Gdańsk Główny",
+      "date": "2026-06-15",
+      "trainNumber": "EIP 3500",
+      "departureTime": "08:25",
+      "travelClass": 2,
+      "passengers": 1,
+      "seatRequired": true,
+      "intervalMinutes": 5,
+      "active": true
+    }
+  ]
+}
