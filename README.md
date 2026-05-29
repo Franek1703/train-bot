@@ -47,3 +47,34 @@ npm run db:migrate
 npm run check:once
 npm run notify:test
 ```
+
+## Watches
+
+Create `config/watches.json` from `config/watches.example.json`.
+
+```json
+{
+  "checks": [
+    {
+      "id": "warszawa-gdansk-eip-3500",
+      "origin": "Warszawa Centralna",
+      "destination": "Gdańsk Główny",
+      "date": "2026-06-15",
+      "trainNumber": "EIP 3500",
+      "departureTime": "08:25",
+      "travelClass": 2,
+      "passengers": 1,
+      "seatRequired": true,
+      "intervalMinutes": 5,
+      "active": true
+    }
+  ]
+}
+```
+
+## Notifications
+
+Seat availability alerts are sent by email through Resend.
+
+Each email includes the detection timestamp formatted in `TIMEZONE`, the train
+details, and the Intercity purchase link.

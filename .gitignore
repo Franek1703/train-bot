@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .env
+config/watches.json
 data/
 screenshots/
 coverage/

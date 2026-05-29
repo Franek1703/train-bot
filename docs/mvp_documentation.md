@@ -172,7 +172,7 @@ Recommended architecture:
            v
 +----------------------+
 | Notification service |
-| Telegram / Email     |
+| Email / Resend       |
 +----------+-----------+
            |
            v
@@ -193,7 +193,7 @@ Language: TypeScript / Node.js
 Browser automation: Playwright
 Database: SQLite or PostgreSQL
 Scheduler: node-cron / BullMQ / simple interval worker
-Notifications: Telegram Bot API
+Notifications: Resend email
 Deployment: VPS / Raspberry Pi / Docker
 ```
 
@@ -204,7 +204,7 @@ Language: Python
 Browser automation: Playwright for Python
 Database: SQLite / PostgreSQL
 Scheduler: APScheduler / Celery
-Notifications: Telegram / Email
+Notifications: Email
 Deployment: VPS / Raspberry Pi / Docker
 ```
 
@@ -244,7 +244,7 @@ Example:
   "passengers": 1,
   "seatRequired": true,
   "checkIntervalMinutes": 3,
-  "notificationChannel": "telegram",
+  "notificationChannel": "email",
   "active": true
 }
 ```
@@ -480,7 +480,7 @@ CREATE TABLE watches (
   check_interval_minutes INTEGER NOT NULL DEFAULT 5,
   active BOOLEAN NOT NULL DEFAULT TRUE,
 
-  notification_channel TEXT NOT NULL DEFAULT 'telegram',
+  notification_channel TEXT NOT NULL DEFAULT 'email',
   notification_target TEXT,
 
   last_known_status TEXT,
@@ -631,41 +631,32 @@ For MVP, one notification per train is simpler.
 
 ---
 
-## 13. Telegram Notification Example
+## 13. Email Notification Example
 
-Telegram is the best notification channel for MVP because it is fast and simple.
+Resend email is the only MVP notification provider. The notification service should stay generic so SMS, Discord, push notifications, or Telegram can be added later.
 
-Example message:
+Example email subject:
 
 ```text
-🚆 Seat available!
+Seat available: EIP 3500 Warszawa Centralna -> Gdańsk Główny
+```
+
+Example email body:
+
+```text
+Seat available!
+
+Detected at: 2026-06-15 14:32 Europe/Warsaw
 
 Train: EIP 3500
-Route: Warszawa Centralna → Gdańsk Główny
-Date: 2026-06-15
-Departure: 08:25
-Arrival: 11:10
+Route: Warszawa Centralna -> Gdańsk Główny
+Travel date: 2026-06-15
+Departure time: 08:25
 Class: 2
 Passengers: 1
 
 Buy now:
 https://www.intercity.pl/...
-```
-
-Example grouped message:
-
-```text
-🚆 Seats available on 2 watched trains!
-
-1. EIP 3500
-Warszawa Centralna → Gdańsk Główny
-2026-06-15, 08:25
-
-2. EIP 1302
-Warszawa Centralna → Kraków Główny
-2026-06-15, 10:20
-
-Open PKP Intercity and buy manually.
 ```
 
 ---
@@ -699,14 +690,7 @@ A simple JSON configuration can be used for MVP before building a full UI.
       "seatRequired": true,
       "intervalMinutes": 5
     }
-  ],
-  "notifications": {
-    "telegram": {
-      "enabled": true,
-      "botToken": "TELEGRAM_BOT_TOKEN",
-      "chatId": "TELEGRAM_CHAT_ID"
-    }
-  }
+  ]
 }
 ```
 
@@ -719,29 +703,17 @@ Recommended `.env` file:
 ```env
 DATABASE_URL=postgresql://user:password@localhost:5432/intercity_monitor
 
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-TELEGRAM_CHAT_ID=your_telegram_chat_id
+NOTIFICATION_CHANNEL=email
+RESEND_API_KEY=your_resend_api_key
+EMAIL_FROM=Intercity Monitor <notifications@yourdomain.com>
+EMAIL_TO=your@email.com
+TIMEZONE=Europe/Warsaw
 
 CHECK_INTERVAL_MINUTES=5
 MAX_PARALLEL_CHECKS=1
 HEADLESS=true
 
 PKP_BASE_URL=https://www.intercity.pl/
-SCREENSHOTS_DIR=./screenshots
-```
-
-For a simple MVP using SQLite:
-
-```env
-DATABASE_URL=file:./data/intercity-monitor.db
-
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-TELEGRAM_CHAT_ID=your_telegram_chat_id
-
-CHECK_INTERVAL_MINUTES=5
-MAX_PARALLEL_CHECKS=1
-HEADLESS=true
-
 SCREENSHOTS_DIR=./screenshots
 ```
 
@@ -775,8 +747,9 @@ intercity-seat-monitor/
 │   │   ├── stationInput.ts
 │   │   └── types.ts
 │   ├── notifications/
-│   │   ├── telegramNotifier.ts
-│   │   └── notificationService.ts
+│   │   ├── emailNotifier.ts
+│   │   ├── notificationService.ts
+│   │   └── types.ts
 │   ├── watches/
 │   │   ├── watchRepository.ts
 │   │   ├── watchService.ts
@@ -1207,15 +1180,14 @@ or:
 
 ### Phase 3: Notifications
 
-Goal: send Telegram alert when a seat is available.
+Goal: send Resend email alert when a seat is available.
 
 Tasks:
 
-* Create Telegram bot using BotFather.
-* Store bot token in `.env`.
-* Get user chat ID.
-* Implement `TelegramNotifier`.
-* Send test notification.
+* Create or configure a Resend API key.
+* Store Resend email settings in `.env`.
+* Implement `EmailNotifier`.
+* Send test email notification.
 * Connect notification logic to checker.
 
 Deliverable:
@@ -1282,10 +1254,10 @@ Options:
 
 * CLI commands,
 * simple web panel,
-* Telegram commands,
+* email-driven admin links,
 * JSON file configuration.
 
-Example Telegram commands:
+Example future CLI commands:
 
 ```text
 /watch Warszawa Centralna | Gdańsk Główny | 2026-06-15 | EIP 3500
@@ -1539,7 +1511,7 @@ Therefore, the first version should only notify the user.
 
 Possible future features:
 
-* Telegram command interface.
+* Telegram command interface as an additional provider.
 * Web dashboard.
 * Support for many watched trains.
 * Support for alternative routes.
@@ -1577,7 +1549,7 @@ The MVP is complete when:
   * unavailable,
   * train not found,
   * check failed.
-* Bot sends Telegram notification when a seat appears.
+* Bot sends Resend email notification when a seat appears.
 * Bot does not send duplicate notifications every cycle.
 * Notifications are deduplicated per watched train.
 * Bot stores check history.
@@ -1594,7 +1566,7 @@ Hardcoded Playwright script checks one connection and prints availability.
 
 ### Milestone 2
 
-Script sends Telegram notification when available.
+Script sends Resend email notification when available.
 
 ### Milestone 3
 
@@ -1622,7 +1594,7 @@ The best version of this project is:
 Private PKP Intercity seat monitor
 + multiple watched trains
 + Playwright-based checker
-+ Telegram notifications
++ Resend email notifications
 + manual ticket purchase
 ```
 
