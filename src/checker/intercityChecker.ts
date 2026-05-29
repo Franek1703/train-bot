@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, type Locator, type Page } from 'playwright';
 import type { Watch } from '@prisma/client';
@@ -70,20 +70,22 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
         durationMs: Date.now() - startedAt,
       });
     } catch (error) {
-      const screenshotPath = await saveErrorScreenshot(page, watch.id);
+      const diagnostic = await captureFailureDiagnostic(page, watch.id);
       const errorMessage = error instanceof Error ? error.message : String(error);
 
       logError('Availability check failed', {
         watchId: watch.id,
         error: errorMessage,
-        screenshotPath,
+        screenshotPath: diagnostic.screenshotPath,
+        diagnosticPath: diagnostic.diagnosticPath,
+        pageState: diagnostic.pageState,
         currentUrl: page.url(),
         durationMs: Date.now() - startedAt,
       });
 
       return resultFromStatus('SEARCH_FAILED', {
         errorMessage,
-        screenshotPath,
+        screenshotPath: diagnostic.screenshotPath,
         durationMs: Date.now() - startedAt,
       });
     } finally {
@@ -98,24 +100,31 @@ async function openSearchUrl(page: Page, watch: Watch): Promise<void> {
     searchUrl: watch.journeyUrl,
   });
 
-  await page.goto(watch.journeyUrl!, { waitUntil: 'commit', timeout: 45_000 });
-  await page.waitForLoadState('domcontentloaded', { timeout: 30_000 }).catch((error) => {
-    logError('Search page did not reach domcontentloaded before timeout', {
+  const navigationError = await navigateToSearchUrl(page, watch);
+  await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch((error) => {
+    logError('Search page did not reach domcontentloaded before timeout; continuing to inspect page', {
       watchId: watch.id,
       error: error instanceof Error ? error.message : String(error),
     });
   });
   await page.waitForTimeout(2_000);
 
+  const pageState = await getPageState(page);
   logInfo('Search URL opened', {
     watchId: watch.id,
-    currentUrl: page.url(),
-    title: await page.title().catch(() => undefined),
+    currentUrl: pageState.currentUrl,
+    title: pageState.title,
+    bodyPreview: pageState.bodyPreview,
+    navigationRecovered: Boolean(navigationError),
   });
+
+  if (navigationError && pageState.currentUrl === 'about:blank' && !pageState.bodyPreview) {
+    throw new Error(`Search URL navigation failed before page content loaded: ${navigationError}`);
+  }
 }
 
 async function selectConnection(page: Page, watch: Watch): Promise<void> {
-  await waitForText(page, /Lista połączeń|Kup bilet/i, watch.id);
+  await waitForSearchResults(page, watch);
 
   if (!watch.trainNumber || !watch.departureTime) {
     throw new Error('trainNumber and departureTime are required to select a search result');
@@ -334,6 +343,39 @@ async function waitForText(page: Page, pattern: RegExp, watchId: string): Promis
   await page.getByText(pattern).first().waitFor({ timeout: 45_000 });
 }
 
+async function waitForSearchResults(page: Page, watch: Watch): Promise<void> {
+  const resultsPattern =
+    /Lista połączeń|Kup bilet|Brak połączeń|Nie znaleziono|Nie znaleźliśmy/i;
+
+  logInfo('Waiting for Intercity search results', {
+    watchId: watch.id,
+    pattern: String(resultsPattern),
+    timeoutMs: 120_000,
+  });
+
+  try {
+    await page.getByText(resultsPattern).first().waitFor({ timeout: 120_000 });
+  } catch (error) {
+    const pageState = await getPageState(page);
+    throw new Error(
+      [
+        'Search results did not finish loading before timeout.',
+        `currentUrl=${pageState.currentUrl}`,
+        `title=${pageState.title ?? ''}`,
+        `bodyPreview=${pageState.bodyPreview ?? ''}`,
+        `error=${error instanceof Error ? error.message : String(error)}`,
+      ].join(' '),
+    );
+  }
+
+  const pageState = await getPageState(page);
+  logInfo('Intercity search results page is ready for train selection', {
+    watchId: watch.id,
+    currentUrl: pageState.currentUrl,
+    bodyPreview: pageState.bodyPreview,
+  });
+}
+
 async function findInput(page: Page, locators: Locator[]): Promise<Locator | undefined> {
   for (const locator of locators) {
     if ((await locator.count()) > 0) {
@@ -344,16 +386,149 @@ async function findInput(page: Page, locators: Locator[]): Promise<Locator | und
   return undefined;
 }
 
-async function saveErrorScreenshot(page: Page, watchId: string): Promise<string | undefined> {
-  await mkdir(env.SCREENSHOTS_DIR, { recursive: true });
-  const screenshotPath = path.join(env.SCREENSHOTS_DIR, `error-${watchId}-${Date.now()}.png`);
-
+async function navigateToSearchUrl(page: Page, watch: Watch): Promise<string | undefined> {
   try {
-    await page.screenshot({ path: screenshotPath, fullPage: true, timeout: 5_000 });
-    return screenshotPath;
-  } catch {
+    await page.goto(watch.journeyUrl!, { waitUntil: 'commit', timeout: 45_000 });
     return undefined;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const pageState = await getPageState(page);
+
+    logError('Search URL navigation did not complete before timeout; stopping load and inspecting page', {
+      watchId: watch.id,
+      searchUrl: watch.journeyUrl,
+      error: errorMessage,
+      currentUrl: pageState.currentUrl,
+      title: pageState.title,
+      bodyPreview: pageState.bodyPreview,
+    });
+
+    await stopPageLoading(page, watch.id);
+    return errorMessage;
   }
+}
+
+async function stopPageLoading(page: Page, watchId: string): Promise<void> {
+  await page.evaluate(() => window.stop()).catch((error) => {
+    logError('Could not stop page loading after navigation failure', {
+      watchId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+}
+
+interface PageState {
+  currentUrl: string;
+  title?: string;
+  bodyPreview?: string;
+}
+
+async function getPageState(page: Page): Promise<PageState> {
+  const [title, bodyPreview] = await Promise.all([
+    page.title().catch(() => undefined),
+    page
+      .locator('body')
+      .innerText({ timeout: 2_000 })
+      .then((text) => compactPreview(text))
+      .catch(() => undefined),
+  ]);
+
+  return {
+    currentUrl: page.url(),
+    title,
+    bodyPreview,
+  };
+}
+
+function compactPreview(text: string, limit = 500): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, limit);
+}
+
+interface FailureDiagnostic {
+  screenshotPath?: string;
+  diagnosticPath?: string;
+  pageState: PageState;
+}
+
+async function captureFailureDiagnostic(page: Page, watchId: string): Promise<FailureDiagnostic> {
+  await mkdir(env.SCREENSHOTS_DIR, { recursive: true });
+  await stopPageLoading(page, watchId);
+
+  const pageState = await getPageState(page);
+  const timestamp = Date.now();
+  const screenshotPath = path.join(env.SCREENSHOTS_DIR, `error-${watchId}-${timestamp}.png`);
+  const screenshotErrors: string[] = [];
+
+  const fullPageSaved = await trySaveScreenshot(page, screenshotPath, true, screenshotErrors);
+  if (fullPageSaved) {
+    logInfo('Saved failure screenshot', {
+      watchId,
+      screenshotPath,
+      fullPage: true,
+    });
+
+    return { screenshotPath, pageState };
+  }
+
+  const viewportSaved = await trySaveScreenshot(page, screenshotPath, false, screenshotErrors);
+  if (viewportSaved) {
+    logInfo('Saved failure screenshot', {
+      watchId,
+      screenshotPath,
+      fullPage: false,
+    });
+
+    return { screenshotPath, pageState };
+  }
+
+  const diagnosticPath = path.join(env.SCREENSHOTS_DIR, `error-${watchId}-${timestamp}.txt`);
+  await writeDiagnosticFile(diagnosticPath, pageState, screenshotErrors);
+
+  logError('Could not save failure screenshot; wrote text diagnostic instead', {
+    watchId,
+    diagnosticPath,
+    screenshotErrors,
+    pageState,
+  });
+
+  return { diagnosticPath, pageState };
+}
+
+async function trySaveScreenshot(
+  page: Page,
+  screenshotPath: string,
+  fullPage: boolean,
+  screenshotErrors: string[],
+): Promise<boolean> {
+  try {
+    await page.screenshot({ path: screenshotPath, fullPage, timeout: 10_000 });
+    return true;
+  } catch (error) {
+    screenshotErrors.push(
+      `${fullPage ? 'fullPage' : 'viewport'}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return false;
+  }
+}
+
+async function writeDiagnosticFile(
+  diagnosticPath: string,
+  pageState: PageState,
+  screenshotErrors: string[],
+): Promise<void> {
+  await writeFile(
+    diagnosticPath,
+    [
+      `currentUrl=${pageState.currentUrl}`,
+      `title=${pageState.title ?? ''}`,
+      `bodyPreview=${pageState.bodyPreview ?? ''}`,
+      `screenshotErrors=${screenshotErrors.join(' | ')}`,
+      '',
+    ].join('\n'),
+    'utf8',
+  );
 }
 
 function logInfo(message: string, context: Record<string, unknown> = {}): void {
