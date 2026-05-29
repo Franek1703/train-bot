@@ -1,5 +1,6 @@
 import type { Watch } from '@prisma/client';
 import { prisma } from '../db/client.js';
+import type { AvailabilityStatus } from '../checker/types.js';
 import type { WatchConfig } from './types.js';
 
 function toTravelDate(date: string): Date {
@@ -58,4 +59,27 @@ export async function loadAndSyncWatches(configPath: string): Promise<Watch[]> {
   const { loadWatchesConfig } = await import('./watchConfig.js');
   const config = await loadWatchesConfig(configPath);
   return syncConfiguredWatches(config.checks);
+}
+
+export async function updateWatchAfterCheck(args: {
+  watchId: string;
+  status: AvailabilityStatus;
+  checkedAt: Date;
+  consecutiveErrors: number;
+}): Promise<Watch> {
+  return prisma.watch.update({
+    where: { id: args.watchId },
+    data: {
+      lastKnownStatus: args.status,
+      lastCheckedAt: args.checkedAt,
+      consecutiveErrors: args.consecutiveErrors,
+    },
+  });
+}
+
+export async function updateLastNotifiedAt(watchId: string, notifiedAt: Date): Promise<Watch> {
+  return prisma.watch.update({
+    where: { id: watchId },
+    data: { lastNotifiedAt: notifiedAt },
+  });
 }
