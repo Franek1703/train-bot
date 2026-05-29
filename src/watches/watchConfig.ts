@@ -6,6 +6,7 @@ const timeSchema = z.string().regex(/^\d{2}:\d{2}$/, 'Expected HH:mm time');
 
 const watchSchema = z.object({
   id: z.string().min(1),
+  journeyUrl: z.string().url(),
   origin: z.string().min(1),
   destination: z.string().min(1),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD date'),

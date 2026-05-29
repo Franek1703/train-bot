@@ -59,3 +59,10 @@ export function resultFromStatus(
 export function parseAvailabilityText(rawStatus: string): AvailabilityResult {
   return resultFromStatus(normalizeAvailabilityStatus(rawStatus), { rawStatus });
 }
+
+export function extractSeatAssignment(text: string): string | undefined {
+  return text
+    .match(/Wagon\s+\d+,\s*miejsce\s+\d+(?:,\s*[^\n\r]+)?/i)?.[0]
+    ?.replace(/\s+/g, ' ')
+    .trim();
+}

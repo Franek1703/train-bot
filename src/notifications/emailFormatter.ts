@@ -32,6 +32,7 @@ export function buildSeatAvailableBody(
   const departureTime = input.result.departureTime ?? input.watch.departureTime ?? 'Unknown';
   const purchaseUrl = input.result.purchaseUrl ?? 'https://www.intercity.pl/';
   const detectedAt = formatDetectedAt(input.detectedAt, timezone);
+  const seatLine = input.result.rawStatus ? [`Seat: ${input.result.rawStatus}`, ''] : [];
 
   return [
     'Seat available!',
@@ -45,6 +46,7 @@ export function buildSeatAvailableBody(
     `Class: ${input.watch.travelClass}`,
     `Passengers: ${input.watch.passengers}`,
     '',
+    ...seatLine,
     'Buy now:',
     purchaseUrl,
   ].join('\n');

@@ -3,7 +3,7 @@
 
 A private automation tool for monitoring one or many selected PKP Intercity trains and notifying the user when a seat becomes available.
 
-The main goal of this project is **not** to automatically buy tickets, but to detect seat availability as quickly as possible and notify the user through a reliable channel such as Telegram, email, push notification, or SMS.
+The main goal of this project is **not** to automatically pay for tickets, but to detect seat availability as quickly as possible, add the selected ticket to the Intercity cart, and notify the user through email.
 
 ---
 
@@ -13,7 +13,7 @@ PKP Intercity seats on popular routes often sell out, especially during weekends
 
 This project monitors selected train connections and checks whether a seat with a valid reservation becomes available.
 
-When availability is detected, the system sends an immediate notification to the user with the relevant train details and a direct link to the PKP Intercity purchase flow.
+When availability is detected, the system sends an immediate notification to the user with the relevant train details, assigned seat, and a direct link to the PKP Intercity purchase flow.
 
 The system must support **multiple watched trains at the same time**. Each watched train is stored as a separate monitoring task called a `watch`.
 
@@ -74,16 +74,9 @@ Each watched train has its own independent state, so notifications are deduplica
 The project should support:
 
 * Monitoring one or many selected PKP Intercity connections at the same time.
-* Checking whether a seat is available for each watched train.
-* Filtering by:
-
-  * origin station,
-  * destination station,
-  * travel date,
-  * train number,
-  * departure time,
-  * class,
-  * number of passengers.
+* Opening a direct PKP Intercity journey URL for each watched train.
+* Checking whether an assigned seat appears on the summary page.
+* Adding the ticket to the cart when an assigned seat is detected.
 * Sending notifications when availability changes.
 * Avoiding duplicate notifications per watched train.
 * Storing monitored trains in a database.
@@ -235,6 +228,7 @@ Example:
 ```json
 {
   "id": "watch_001",
+  "journeyUrl": "https://ebilet.intercity.pl/wybormiejsc?...",
   "origin": "Warszawa Centralna",
   "destination": "Gdańsk Główny",
   "date": "2026-06-15",
@@ -399,16 +393,15 @@ Example result:
 
 This is the most realistic MVP strategy.
 
-The bot behaves like a normal user:
+The bot behaves like a normal user, starting from a direct Intercity journey URL:
 
-1. Opens the PKP Intercity website.
-2. Enters origin station.
-3. Enters destination station.
-4. Selects date.
-5. Searches for connections.
-6. Finds the selected train.
-7. Checks whether a seat is available.
-8. Sends a notification if available.
+1. Opens the configured `/wybormiejsc` journey URL.
+2. Continues to payment.
+3. Logs in if prompted.
+4. Waits for the summary page.
+5. Checks whether an assigned seat is visible.
+6. Adds the ticket to the cart.
+7. Sends a notification if available.
 
 Advantages:
 
@@ -438,12 +431,11 @@ For MVP, use **Playwright browser automation**.
 ```text
 1. Load all active watches from database.
 2. For each due watch:
-   1. Open PKP Intercity search page.
-   2. Fill origin and destination.
-   3. Select travel date.
-   4. Run search.
-   5. Locate train by number and optionally departure time.
-   6. Check availability text/status.
+   1. Open configured PKP Intercity journey URL.
+   2. Continue through the payment/login gate.
+   3. Locate the summary page.
+   4. Check assigned seat text.
+   5. Add the ticket to the cart.
    7. Normalize result.
    8. Save check result.
    9. Compare with previous known status.
@@ -654,6 +646,7 @@ Travel date: 2026-06-15
 Departure time: 08:25
 Class: 2
 Passengers: 1
+Seat: Wagon 8, miejsce 67, Środek
 
 Buy now:
 https://www.intercity.pl/...
@@ -669,26 +662,18 @@ A simple JSON configuration can be used for MVP before building a full UI.
 {
   "checks": [
     {
-      "origin": "Warszawa Centralna",
-      "destination": "Gdańsk Główny",
-      "date": "2026-06-15",
-      "trainNumber": "EIP 3500",
-      "departureTime": "08:25",
+      "id": "poznan-warszawa-ic-146",
+      "journeyUrl": "https://ebilet.intercity.pl/wybormiejsc?dwyj=2026-05-31&swyj=5100081&sprzy=5100067&time=11%3A00&przy=0&sprzez=&ticket100=1010&ticket50=&polbez=0",
+      "origin": "Poznań Główny",
+      "destination": "Warszawa Zachodnia",
+      "date": "2026-05-31",
+      "trainNumber": "IC 146",
+      "departureTime": "11:35",
       "travelClass": 2,
       "passengers": 1,
       "seatRequired": true,
-      "intervalMinutes": 3
-    },
-    {
-      "origin": "Warszawa Centralna",
-      "destination": "Kraków Główny",
-      "date": "2026-06-15",
-      "trainNumber": "EIP 1302",
-      "departureTime": "10:20",
-      "travelClass": 2,
-      "passengers": 1,
-      "seatRequired": true,
-      "intervalMinutes": 5
+      "intervalMinutes": 5,
+      "active": true
     }
   ]
 }
@@ -713,7 +698,9 @@ CHECK_INTERVAL_MINUTES=5
 MAX_PARALLEL_CHECKS=1
 HEADLESS=true
 
-PKP_BASE_URL=https://www.intercity.pl/
+PKP_BASE_URL=https://ebilet.intercity.pl/
+INTERCITY_EMAIL=your_intercity_email
+INTERCITY_PASSWORD=your_intercity_password
 SCREENSHOTS_DIR=./screenshots
 ```
 
@@ -744,7 +731,6 @@ intercity-seat-monitor/
 │   ├── checker/
 │   │   ├── intercityChecker.ts
 │   │   ├── parser.ts
-│   │   ├── stationInput.ts
 │   │   └── types.ts
 │   ├── notifications/
 │   │   ├── emailNotifier.ts
@@ -1271,36 +1257,8 @@ Example future CLI commands:
 
 ## 25. Example CLI Commands
 
-Add a watch:
-
-```bash
-npm run watch:add \
-  -- --origin "Warszawa Centralna" \
-  --destination "Gdańsk Główny" \
-  --date "2026-06-15" \
-  --train "EIP 3500" \
-  --departure "08:25" \
-  --class 2 \
-  --passengers 1
-```
-
-List watches:
-
-```bash
-npm run watch:list
-```
-
-Remove a watch:
-
-```bash
-npm run watch:remove -- --id watch_001
-```
-
-Pause a watch:
-
-```bash
-npm run watch:pause -- --id watch_001
-```
+For MVP, watches are managed in `config/watches.json`. Each watch must include
+the exact `journeyUrl` copied from the PKP Intercity journey page.
 
 Resume a watch:
 

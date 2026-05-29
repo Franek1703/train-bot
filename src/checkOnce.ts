@@ -1,3 +1,3 @@
 import { runSchedulerTick } from './scheduler/scheduler.js';
 
-await runSchedulerTick();
+await runSchedulerTick({ force: true });

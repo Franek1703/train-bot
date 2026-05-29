@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeAvailabilityStatus, parseAvailabilityText } from '../src/checker/parser.js';
+import {
+  extractSeatAssignment,
+  normalizeAvailabilityStatus,
+  parseAvailabilityText,
+} from '../src/checker/parser.js';
 
 describe('normalizeAvailabilityStatus', () => {
   it('detects available seats', () => {
@@ -28,5 +32,13 @@ describe('parseAvailabilityText', () => {
     expect(result.status).toBe('AVAILABLE_WITH_SEAT');
     expect(result.available).toBe(true);
     expect(result.seatAvailable).toBe(true);
+  });
+});
+
+describe('extractSeatAssignment', () => {
+  it('detects assigned seat text from the summary page', () => {
+    expect(extractSeatAssignment('IC 146\nWagon 8, miejsce 67, Środek\nMiejsce przy stoliku')).toBe(
+      'Wagon 8, miejsce 67, Środek',
+    );
   });
 });

@@ -1,12 +1,13 @@
 {
   "checks": [
     {
-      "id": "warszawa-gdansk-eip-3500",
-      "origin": "Warszawa Centralna",
-      "destination": "Gdańsk Główny",
-      "date": "2026-06-15",
-      "trainNumber": "EIP 3500",
-      "departureTime": "08:25",
+      "id": "poznan-warszawa-ic-146",
+      "journeyUrl": "https://ebilet.intercity.pl/wybormiejsc?dwyj=2026-05-31&swyj=5100081&sprzy=5100067&time=11%3A00&przy=0&sprzez=&ticket100=1010&ticket50=&polbez=0",
+      "origin": "Poznań Główny",
+      "destination": "Warszawa Zachodnia",
+      "date": "2026-05-31",
+      "trainNumber": "IC 146",
+      "departureTime": "11:35",
       "travelClass": 2,
       "passengers": 1,
       "seatRequired": true,

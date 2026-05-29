@@ -10,6 +10,7 @@ datasource db {
 model Watch {
   id                   String              @id @default(uuid()) @db.Uuid
   configKey            String              @unique @map("config_key")
+  journeyUrl           String?             @map("journey_url")
   origin               String
   destination          String
   travelDate           DateTime            @map("travel_date") @db.Date

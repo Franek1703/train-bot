@@ -22,6 +22,7 @@ const notificationInput = {
     seatAvailable: true,
     trainNumber: 'EIP 3500',
     departureTime: '08:25',
+    rawStatus: 'Wagon 8, miejsce 67, Środek',
     purchaseUrl: 'https://www.intercity.pl/',
   },
   availabilityCheck: {
@@ -55,6 +56,7 @@ describe('email formatting', () => {
     expect(body).toContain('Departure time: 08:25');
     expect(body).toContain('Class: 2');
     expect(body).toContain('Passengers: 1');
+    expect(body).toContain('Seat: Wagon 8, miejsce 67, Środek');
     expect(body).toContain('https://www.intercity.pl/');
   });
 });
