@@ -1,5 +1,5 @@
 CREATE TABLE "watches" (
-  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "id" UUID NOT NULL,
   "config_key" TEXT NOT NULL,
   "origin" TEXT NOT NULL,
   "destination" TEXT NOT NULL,
@@ -18,14 +18,14 @@ CREATE TABLE "watches" (
   "last_notified_at" TIMESTAMP(3),
   "consecutive_errors" INTEGER NOT NULL DEFAULT 0,
   "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updated_at" TIMESTAMP(3) NOT NULL,
   CONSTRAINT "watches_pkey" PRIMARY KEY ("id")
 );
 
 CREATE UNIQUE INDEX "watches_config_key_key" ON "watches"("config_key");
 
 CREATE TABLE "availability_checks" (
-  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "id" UUID NOT NULL,
   "watch_id" UUID NOT NULL,
   "checked_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "status" TEXT NOT NULL,
@@ -47,7 +47,7 @@ CREATE TABLE "availability_checks" (
 CREATE INDEX "availability_checks_watch_id_checked_at_idx" ON "availability_checks"("watch_id", "checked_at");
 
 CREATE TABLE "notifications" (
-  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "id" UUID NOT NULL,
   "watch_id" UUID NOT NULL,
   "availability_check_id" UUID,
   "sent_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
