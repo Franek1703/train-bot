@@ -22,6 +22,10 @@ const envSchema = z.object({
     .string()
     .default('false')
     .transform((value) => value.toLowerCase() === 'true'),
+  ADD_TO_CART: z
+    .string()
+    .default('true')
+    .transform((value) => value.toLowerCase() === 'true'),
   SCREENSHOTS_DIR: z.string().default('./screenshots'),
 });
 

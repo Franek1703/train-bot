@@ -69,19 +69,34 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
       logInfo('Assigned seat detected on summary page', {
         watchId: watch.id,
         seatAssignment,
+        addToCart: env.ADD_TO_CART,
       });
 
-      await addToCart(page, watch);
-      const cartScreenshotPath = await savePageScreenshot(page, watch.id, 'cart');
-      stepScreenshots.cart = cartScreenshotPath;
+      if (env.ADD_TO_CART) {
+        await addToCart(page, watch);
+        const cartScreenshotPath = await savePageScreenshot(page, watch.id, 'cart');
+        stepScreenshots.cart = cartScreenshotPath;
+
+        return resultFromStatus('AVAILABLE_WITH_SEAT', {
+          trainNumber: watch.trainNumber ?? undefined,
+          departureTime: watch.departureTime ?? undefined,
+          purchaseUrl: page.url(),
+          rawStatus: seatAssignment,
+          rawPayload: { seatAssignment, currentUrl: page.url(), stepScreenshots, addedToCart: true },
+          screenshotPath: cartScreenshotPath ?? summaryScreenshotPath,
+          durationMs: Date.now() - startedAt,
+        });
+      }
+
+      logInfo('Skipping add to cart because ADD_TO_CART is disabled', { watchId: watch.id });
 
       return resultFromStatus('AVAILABLE_WITH_SEAT', {
         trainNumber: watch.trainNumber ?? undefined,
         departureTime: watch.departureTime ?? undefined,
         purchaseUrl: page.url(),
         rawStatus: seatAssignment,
-        rawPayload: { seatAssignment, currentUrl: page.url(), stepScreenshots },
-        screenshotPath: cartScreenshotPath ?? summaryScreenshotPath,
+        rawPayload: { seatAssignment, currentUrl: page.url(), stepScreenshots, addedToCart: false },
+        screenshotPath: summaryScreenshotPath,
         durationMs: Date.now() - startedAt,
       });
     } catch (error) {
