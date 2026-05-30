@@ -3,6 +3,7 @@ import path from 'node:path';
 import { chromium, firefox, type Browser, type BrowserType, type Locator, type Page } from 'playwright';
 import type { Watch } from '@prisma/client';
 import { env } from '../config/env.js';
+import { recordCheckLog } from '../scheduler/checkLogger.js';
 import { extractSeatAssignment, resultFromStatus } from './parser.js';
 import type { AvailabilityChecker, AvailabilityResult } from './types.js';
 
@@ -116,6 +117,8 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
       return resultFromStatus('SEARCH_FAILED', {
         errorMessage,
         screenshotPath: diagnostic.screenshotPath,
+        diagnosticPath: diagnostic.diagnosticPath,
+        pageState: diagnostic.pageState,
         durationMs: Date.now() - startedAt,
       });
     } finally {
@@ -572,8 +575,9 @@ async function savePageScreenshot(
     return undefined;
   }
 
-  await mkdir(env.SCREENSHOTS_DIR, { recursive: true });
-  const screenshotPath = path.join(env.SCREENSHOTS_DIR, `${label}-${watchId}-${Date.now()}.png`);
+  const screenshotDirectory = path.join(env.ARTIFACTS_DIR, watchId);
+  await mkdir(screenshotDirectory, { recursive: true });
+  const screenshotPath = path.join(screenshotDirectory, `${label}-${Date.now()}.png`);
   const saved = await trySaveScreenshot(page, screenshotPath, true, []);
 
   if (!saved) {
@@ -592,11 +596,12 @@ async function captureFailureDiagnostic(page: Page, watchId: string): Promise<Fa
     return { pageState };
   }
 
-  await mkdir(env.SCREENSHOTS_DIR, { recursive: true });
+  const diagnosticDirectory = path.join(env.ARTIFACTS_DIR, watchId);
+  await mkdir(diagnosticDirectory, { recursive: true });
   await stopPageLoading(page, watchId);
 
   const timestamp = Date.now();
-  const screenshotPath = path.join(env.SCREENSHOTS_DIR, `error-${watchId}-${timestamp}.png`);
+  const screenshotPath = path.join(diagnosticDirectory, `error-${timestamp}.png`);
   const screenshotErrors: string[] = [];
 
   const fullPageSaved = await trySaveScreenshot(page, screenshotPath, true, screenshotErrors);
@@ -621,7 +626,7 @@ async function captureFailureDiagnostic(page: Page, watchId: string): Promise<Fa
     return { screenshotPath, pageState };
   }
 
-  const diagnosticPath = path.join(env.SCREENSHOTS_DIR, `error-${watchId}-${timestamp}.txt`);
+  const diagnosticPath = path.join(diagnosticDirectory, `error-${timestamp}.txt`);
   await writeDiagnosticFile(diagnosticPath, pageState, screenshotErrors);
 
   logError('Could not save failure screenshot; wrote text diagnostic instead', {
@@ -672,10 +677,12 @@ async function writeDiagnosticFile(
 }
 
 function logInfo(message: string, context: Record<string, unknown> = {}): void {
+  recordCheckLog('info', message, context);
   console.log(JSON.stringify({ level: 'info', message, ...context }));
 }
 
 function logError(message: string, context: Record<string, unknown> = {}): void {
+  recordCheckLog('error', message, context);
   console.error(JSON.stringify({ level: 'error', message, ...context }));
 }
 

@@ -21,6 +21,12 @@ export interface AvailabilityResult {
   rawPayload?: unknown;
   errorMessage?: string;
   screenshotPath?: string;
+  diagnosticPath?: string;
+  pageState?: {
+    currentUrl: string;
+    title?: string;
+    bodyPreview?: string;
+  };
   durationMs?: number;
 }
 

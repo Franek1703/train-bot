@@ -1,8 +1,15 @@
 import pLimit from 'p-limit';
+import path from 'node:path';
+import {
+  contentTypeForPath,
+  createArtifactRecord,
+  writeTextArtifact,
+} from '../artifacts/artifactRepository.js';
 import { saveAvailabilityCheck } from '../checker/availabilityRepository.js';
 import { PlaywrightIntercityChecker } from '../checker/intercityChecker.js';
 import { env } from '../config/env.js';
 import { disconnectDatabase } from '../db/client.js';
+import { createWatchError } from '../errors/errorRepository.js';
 import { notifySeatAvailable } from '../notifications/notificationService.js';
 import {
   findActiveWatches,
@@ -10,6 +17,7 @@ import {
   updateWatchAfterCheck,
   setWatchActive,
 } from '../watches/watchRepository.js';
+import { captureCheckLogs } from './checkLogger.js';
 import {
   isWatchDueForCheck,
   nextConsecutiveErrors,
@@ -127,10 +135,25 @@ export async function processSingleWatch(
     }),
   );
 
-  const result = await checker.checkAvailability(watch);
+  const { result, entries } = await captureCheckLogs(() => checker.checkAvailability(watch));
   const availabilityCheck = await saveAvailabilityCheck(watch.id, result);
   const checkedAt = availabilityCheck.checkedAt;
   const consecutiveErrors = nextConsecutiveErrors(watch, result.status);
+  const logArtifact = await writeTextArtifact({
+    watchId: watch.id,
+    availabilityCheckId: availabilityCheck.id,
+    kind: 'log',
+    label: 'check-log',
+    fileName: `check-${availabilityCheck.id}.jsonl`,
+    content: entries.map((entry) => JSON.stringify(entry)).join('\n'),
+    contentType: 'application/x-ndjson; charset=utf-8',
+  });
+  const screenshotArtifact = result.screenshotPath
+    ? await createFileArtifact(watch.id, availabilityCheck.id, result.screenshotPath, 'screenshot')
+    : undefined;
+  const diagnosticArtifact = result.diagnosticPath
+    ? await createFileArtifact(watch.id, availabilityCheck.id, result.diagnosticPath, 'diagnostic')
+    : undefined;
 
   console.log(
     JSON.stringify({
@@ -154,6 +177,21 @@ export async function processSingleWatch(
     checkedAt,
     consecutiveErrors,
   });
+
+  if (result.status === 'SEARCH_FAILED') {
+    await createWatchError({
+      watchId: watch.id,
+      availabilityCheckId: availabilityCheck.id,
+      status: result.status,
+      message: result.errorMessage ?? 'Availability check failed',
+      currentUrl: result.pageState?.currentUrl,
+      pageTitle: result.pageState?.title,
+      bodyPreview: result.pageState?.bodyPreview,
+      logArtifactId: logArtifact.id,
+      screenshotArtifactId: screenshotArtifact?.id,
+      diagnosticArtifactId: diagnosticArtifact?.id,
+    });
+  }
 
   const shouldNotify = shouldSendNotification({
     previousStatus: watch.lastKnownStatus,
@@ -183,6 +221,22 @@ export async function processSingleWatch(
   }
 
   return availabilityCheck;
+}
+
+async function createFileArtifact(
+  watchId: string,
+  availabilityCheckId: string,
+  filePath: string,
+  kind: string,
+) {
+  return createArtifactRecord({
+    watchId,
+    availabilityCheckId,
+    kind,
+    label: path.basename(filePath),
+    filePath,
+    contentType: contentTypeForPath(filePath),
+  });
 }
 
 function randomDelayMs(): number {
