@@ -31,6 +31,8 @@ model Watch {
   updatedAt            DateTime            @updatedAt @map("updated_at")
   availabilityChecks   AvailabilityCheck[]
   notifications        Notification[]
+  artifacts            WatchArtifact[]
+  errors               WatchError[]
 
   @@map("watches")
 }
@@ -54,9 +56,49 @@ model AvailabilityCheck {
   durationMs     Int?           @map("duration_ms")
   watch          Watch          @relation(fields: [watchId], references: [id], onDelete: Cascade)
   notifications  Notification[]
+  artifacts      WatchArtifact[]
+  errors         WatchError[]
 
   @@index([watchId, checkedAt])
   @@map("availability_checks")
+}
+
+model WatchArtifact {
+  id                  String             @id @default(uuid()) @db.Uuid
+  watchId             String             @map("watch_id") @db.Uuid
+  availabilityCheckId String?            @map("availability_check_id") @db.Uuid
+  kind                String
+  label               String?
+  filePath            String             @map("file_path")
+  contentType         String             @map("content_type")
+  createdAt           DateTime           @default(now()) @map("created_at")
+  watch               Watch              @relation(fields: [watchId], references: [id], onDelete: Cascade)
+  availabilityCheck   AvailabilityCheck? @relation(fields: [availabilityCheckId], references: [id], onDelete: Cascade)
+
+  @@index([watchId, createdAt])
+  @@index([availabilityCheckId])
+  @@map("watch_artifacts")
+}
+
+model WatchError {
+  id                    String             @id @default(uuid()) @db.Uuid
+  watchId               String             @map("watch_id") @db.Uuid
+  availabilityCheckId   String?            @map("availability_check_id") @db.Uuid
+  status                String
+  message               String
+  currentUrl            String?            @map("current_url")
+  pageTitle             String?            @map("page_title")
+  bodyPreview           String?            @map("body_preview")
+  logArtifactId         String?            @map("log_artifact_id") @db.Uuid
+  screenshotArtifactId  String?            @map("screenshot_artifact_id") @db.Uuid
+  diagnosticArtifactId  String?            @map("diagnostic_artifact_id") @db.Uuid
+  createdAt             DateTime           @default(now()) @map("created_at")
+  watch                 Watch              @relation(fields: [watchId], references: [id], onDelete: Cascade)
+  availabilityCheck     AvailabilityCheck? @relation(fields: [availabilityCheckId], references: [id], onDelete: Cascade)
+
+  @@index([watchId, createdAt])
+  @@index([availabilityCheckId])
+  @@map("watch_errors")
 }
 
 model Notification {

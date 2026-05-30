@@ -6,9 +6,9 @@ import { disconnectDatabase } from '../db/client.js';
 import { notifySeatAvailable } from '../notifications/notificationService.js';
 import {
   findActiveWatches,
-  loadAndSyncWatches,
   updateLastNotifiedAt,
   updateWatchAfterCheck,
+  setWatchActive,
 } from '../watches/watchRepository.js';
 import {
   isWatchDueForCheck,
@@ -27,13 +27,11 @@ export async function runSchedulerTick(options: SchedulerTickOptions = {}): Prom
     JSON.stringify({
       level: 'info',
       message: 'Scheduler tick started',
-      watchesConfigPath: env.WATCHES_CONFIG_PATH,
       maxParallelChecks: env.MAX_PARALLEL_CHECKS,
       force: options.force ?? false,
     }),
   );
 
-  await loadAndSyncWatches(env.WATCHES_CONFIG_PATH);
   const activeWatches = await findActiveWatches();
   const dueWatches = options.force
     ? activeWatches
@@ -114,9 +112,9 @@ export async function runScheduler(): Promise<void> {
   await disconnectDatabase();
 }
 
-async function processSingleWatch(
+export async function processSingleWatch(
   watch: Awaited<ReturnType<typeof findActiveWatches>>[number],
-): Promise<void> {
+): Promise<Awaited<ReturnType<typeof saveAvailabilityCheck>>> {
   console.log(
     JSON.stringify({
       level: 'info',
@@ -181,7 +179,10 @@ async function processSingleWatch(
       detectedAt: checkedAt,
     });
     await updateLastNotifiedAt(watch.id, new Date());
+    await setWatchActive(watch.id, false);
   }
+
+  return availabilityCheck;
 }
 
 function randomDelayMs(): number {
