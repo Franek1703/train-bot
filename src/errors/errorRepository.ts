@@ -1,16 +1,20 @@
-import type { WatchError } from '@prisma/client';
 import { prisma } from '../db/client.js';
 
-export async function listErrors(): Promise<WatchError[]> {
+export async function listErrors() {
   return prisma.watchError.findMany({
     orderBy: { createdAt: 'desc' },
     take: 100,
+    include: { watch: true },
   });
 }
 
-export async function getErrorById(errorId: string): Promise<WatchError | null> {
+export async function getErrorById(errorId: string) {
   return prisma.watchError.findUnique({
     where: { id: errorId },
+    include: {
+      watch: true,
+      availabilityCheck: true,
+    },
   });
 }
 
@@ -25,7 +29,7 @@ export async function createWatchError(args: {
   logArtifactId?: string;
   screenshotArtifactId?: string;
   diagnosticArtifactId?: string;
-}): Promise<WatchError> {
+}) {
   return prisma.watchError.create({
     data: {
       watchId: args.watchId,

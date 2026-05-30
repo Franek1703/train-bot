@@ -73,6 +73,30 @@ export async function findWatchById(watchId: string): Promise<Watch | null> {
   });
 }
 
+export async function findWatchDetails(watchId: string) {
+  return prisma.watch.findUnique({
+    where: { id: watchId },
+    include: {
+      availabilityChecks: {
+        orderBy: { checkedAt: 'desc' },
+        take: 50,
+      },
+      notifications: {
+        orderBy: { sentAt: 'desc' },
+        take: 25,
+      },
+      errors: {
+        orderBy: { createdAt: 'desc' },
+        take: 25,
+      },
+      artifacts: {
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      },
+    },
+  });
+}
+
 export async function createWatch(input: WatchInput): Promise<Watch> {
   return prisma.watch.create({
     data: toCreateWatchData(input),

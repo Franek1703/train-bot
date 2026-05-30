@@ -11,6 +11,7 @@ import {
   createWatch,
   deleteWatch,
   findWatchById,
+  findWatchDetails,
   findWatches,
   setWatchActive,
   updateWatch,
@@ -105,7 +106,7 @@ async function handleWatches(context: RouteContext): Promise<void> {
   }
 
   if (request.method === 'GET' && parts.length === 2) {
-    const watch = await findWatchById(watchId);
+    const watch = await findWatchDetails(watchId);
     if (!watch) {
       sendError(response, 404, 'Watch not found');
       return;
