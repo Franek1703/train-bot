@@ -16,7 +16,8 @@ ticket.
 - Playwright
 - PostgreSQL / Prisma
 - Resend email notifications
-- JSON watch configuration
+- DB-managed watcher API
+- React dashboard
 
 ## Environment
 
@@ -37,6 +38,10 @@ CHECK_INTERVAL_MINUTES=5
 MAX_PARALLEL_CHECKS=1
 HEADLESS=true
 SCREENSHOTS_DIR=./screenshots
+ARTIFACTS_DIR=./runtime/artifacts
+API_HOST=0.0.0.0
+API_PORT=3001
+DASHBOARD_ORIGIN=http://localhost:5173
 ```
 
 ## Scripts
@@ -51,9 +56,31 @@ npm run check:once
 npm run notify:test
 ```
 
+## Docker
+
+Run the full local stack:
+
+```bash
+docker compose up --build
+```
+
+Services:
+
+- Dashboard: `http://localhost:5173`
+- Bot API: `http://localhost:3001`
+- Postgres: `localhost:5432`
+
+The compose stack includes named volumes for Postgres data and watcher artifacts.
+Watcher screenshots and per-check logs are stored in the bot artifact volume and
+remain available in the dashboard until the watcher is deleted.
+
+The bot container runs Prisma migrations on startup with `prisma migrate deploy`.
+
 ## Watches
 
-Create `config/watches.json` from `config/watches.example.json`.
+Watchers are now managed through the API/dashboard and stored in Postgres.
+`config/watches.example.json` remains as a reference for the fields needed to
+create a watcher.
 
 ```json
 {
@@ -83,3 +110,28 @@ and the ticket is added to the cart.
 
 Each email includes the detection timestamp formatted in `TIMEZONE`, the train
 details, assigned seat, and the Intercity cart/summary link.
+
+After a watcher reaches `AVAILABLE_WITH_SEAT` and the email is sent, the bot
+automatically sets that watcher to inactive so it stops checking but remains
+visible with its history in the dashboard.
+
+## API
+
+The bot API is local/private and has no authentication in this version.
+
+```text
+GET    /health
+GET    /watches
+POST   /watches
+GET    /watches/:id
+PATCH  /watches/:id
+POST   /watches/:id/stop
+POST   /watches/:id/resume
+DELETE /watches/:id
+POST   /watches/:id/check-now
+GET    /errors
+GET    /errors/:id
+GET    /artifacts/:artifactId
+```
+
+Deleting a watcher also deletes its stored artifact files.
