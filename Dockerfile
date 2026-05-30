@@ -11,4 +11,6 @@ RUN npm run prisma:generate
 COPY . .
 RUN npm run build
 
-CMD ["npm", "start"]
+EXPOSE 3001
+
+CMD ["npm", "run", "start:docker"]

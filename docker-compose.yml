@@ -16,5 +16,51 @@ services:
       timeout: 5s
       retries: 10
 
+  bot-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: train-bot-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/intercity_monitor
+      NOTIFICATION_CHANNEL: email
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      EMAIL_TO: ${EMAIL_TO:-}
+      TIMEZONE: ${TIMEZONE:-Europe/Warsaw}
+      PKP_BASE_URL: https://ebilet.intercity.pl/
+      INTERCITY_EMAIL: ${INTERCITY_EMAIL:-}
+      INTERCITY_PASSWORD: ${INTERCITY_PASSWORD:-}
+      CHECK_INTERVAL_MINUTES: ${CHECK_INTERVAL_MINUTES:-5}
+      MAX_PARALLEL_CHECKS: ${MAX_PARALLEL_CHECKS:-1}
+      HEADLESS: ${HEADLESS:-true}
+      SAVE_SCREENSHOTS: ${SAVE_SCREENSHOTS:-true}
+      ADD_TO_CART: ${ADD_TO_CART:-true}
+      API_HOST: 0.0.0.0
+      API_PORT: 3001
+      DASHBOARD_ORIGIN: http://localhost:5173
+      ARTIFACTS_DIR: /app/runtime/artifacts
+      SCREENSHOTS_DIR: /app/runtime/artifacts
+    ports:
+      - "3001:3001"
+    volumes:
+      - bot-artifacts:/app/runtime/artifacts
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: http://localhost:3001
+    container_name: train-bot-dashboard
+    depends_on:
+      - bot-api
+    ports:
+      - "5173:80"
+
 volumes:
   postgres-data:
+  bot-artifacts:

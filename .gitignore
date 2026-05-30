@@ -7,3 +7,6 @@ screenshots/
 coverage/
 .DS_Store
 *.log
+*.tsbuildinfo
+runtime/
+dashboard/dist/
