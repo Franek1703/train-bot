@@ -41,4 +41,10 @@ describe('extractSeatAssignment', () => {
       'Wagon 8, miejsce 67, Środek',
     );
   });
+
+  it('detects wagon and seat when they are not on the same line', () => {
+    expect(extractSeatAssignment('IC 146\nWagon 9\nmiejsce 17\nŚrodek')).toBe(
+      'Wagon 9, miejsce 17, Środek',
+    );
+  });
 });

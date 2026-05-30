@@ -35,18 +35,19 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
       await acceptCookiesIfVisible(page);
       const listScreenshotPath = await selectConnection(page, watch);
       const journeyScreenshotPath = await selectTravelClass(page, watch);
-      const summaryScreenshotPath = await proceedToSummary(page, watch);
+      await proceedToSummary(page, watch);
       await loginIfRequired(page, watch);
       await waitForSummary(page, watch);
 
-      const stepScreenshots = {
+      const summaryScreenshotPath = await savePageScreenshot(page, watch.id, 'summary');
+
+      const stepScreenshots: Record<string, string | undefined> = {
         list: listScreenshotPath,
         journey: journeyScreenshotPath,
         summary: summaryScreenshotPath,
       };
 
-      const bodyText = await page.locator('body').innerText({ timeout: 10_000 });
-      const seatAssignment = extractSeatAssignment(bodyText);
+      const seatAssignment = await readSeatAssignment(page, watch.id);
 
       if (!seatAssignment) {
         logInfo('Summary page did not contain assigned seat text', {
@@ -71,6 +72,8 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
       });
 
       await addToCart(page, watch);
+      const cartScreenshotPath = await savePageScreenshot(page, watch.id, 'cart');
+      stepScreenshots.cart = cartScreenshotPath;
 
       return resultFromStatus('AVAILABLE_WITH_SEAT', {
         trainNumber: watch.trainNumber ?? undefined,
@@ -78,7 +81,7 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
         purchaseUrl: page.url(),
         rawStatus: seatAssignment,
         rawPayload: { seatAssignment, currentUrl: page.url(), stepScreenshots },
-        screenshotPath: summaryScreenshotPath ?? journeyScreenshotPath ?? listScreenshotPath,
+        screenshotPath: cartScreenshotPath ?? summaryScreenshotPath,
         durationMs: Date.now() - startedAt,
       });
     } catch (error) {
@@ -203,10 +206,10 @@ async function selectTravelClass(page: Page, watch: Watch): Promise<string | und
   return savePageScreenshot(page, watch.id, 'journey');
 }
 
-async function proceedToSummary(page: Page, watch: Watch): Promise<string | undefined> {
+async function proceedToSummary(page: Page, watch: Watch): Promise<void> {
   if (await hasSummaryContent(page)) {
     logInfo('Already on summary page', { watchId: watch.id });
-    return savePageScreenshot(page, watch.id, 'summary');
+    return;
   }
 
   const proceedButton = page.getByRole('button', { name: /przejdź do płatności/i }).first();
@@ -218,9 +221,13 @@ async function proceedToSummary(page: Page, watch: Watch): Promise<string | unde
   logInfo('Clicking proceed to payment button', { watchId: watch.id });
   await proceedButton.scrollIntoViewIfNeeded();
   await proceedButton.click({ timeout: 10_000 });
-  await page.waitForTimeout(2_000);
 
-  return savePageScreenshot(page, watch.id, 'summary');
+  await page
+    .getByRole('button', { name: /^zaloguj się$/i })
+    .or(page.getByRole('button', { name: /dodaj do koszyka/i }))
+    .or(page.getByText(/Kontynuuj jako Gość/i))
+    .first()
+    .waitFor({ timeout: 45_000 });
 }
 
 async function acceptCookiesIfVisible(page: Page): Promise<void> {
@@ -327,16 +334,41 @@ async function loginIfRequired(page: Page, watch: Watch): Promise<void> {
 
 async function waitForSummary(page: Page, watch: Watch): Promise<void> {
   logInfo('Waiting for summary page', { watchId: watch.id });
+  await page.getByRole('button', { name: /dodaj do koszyka/i }).first().waitFor({ timeout: 45_000 });
+  await page.waitForTimeout(2_000);
+}
 
-  if (await hasSummaryContent(page)) {
-    return;
+async function readSeatAssignment(page: Page, watchId: string): Promise<string | undefined> {
+  try {
+    await waitForSeatAssignmentText(page, watchId);
+  } catch {
+    logInfo('Assigned seat details did not appear on summary page', { watchId });
   }
 
-  await page
-    .getByRole('button', { name: /dodaj do koszyka/i })
-    .or(page.getByText(/Przydzielono|Przydzielone/i))
-    .first()
-    .waitFor({ timeout: 45_000 });
+  const bodyText = await page.locator('body').innerText({ timeout: 10_000 });
+  const seatAssignment = extractSeatAssignment(bodyText);
+
+  if (seatAssignment) {
+    return seatAssignment;
+  }
+
+  logInfo('Seat assignment text was not found on summary page body', {
+    watchId,
+    bodyPreview: compactPreview(bodyText, 800),
+  });
+
+  return undefined;
+}
+
+async function waitForSeatAssignmentText(page: Page, watchId: string): Promise<void> {
+  logInfo('Waiting for assigned seat details on summary page', { watchId });
+
+  await page.waitForFunction(
+    () => /Wagon\s+\d+/i.test(document.body.innerText) && /miejsce\s+\d+/i.test(document.body.innerText),
+    undefined,
+    { timeout: 15_000 },
+  );
+  await page.waitForTimeout(500);
 }
 
 async function addToCart(page: Page, watch: Watch): Promise<void> {
@@ -352,7 +384,30 @@ async function addToCart(page: Page, watch: Watch): Promise<void> {
   logInfo('Clicking add to cart button', { watchId: watch.id });
   await addToCartButton.scrollIntoViewIfNeeded();
   await addToCartButton.click({ timeout: 10_000 });
-  await page.waitForTimeout(2_000);
+
+  let addedToCart = false;
+  try {
+    await page.getByText(/dodano do koszyka|bilet dodany|dodano bilet/i).first().waitFor({ timeout: 10_000 });
+    addedToCart = true;
+  } catch {
+    addedToCart =
+      (await addToCartButton.count()) === 0 ||
+      !(await addToCartButton.isVisible().catch(() => false));
+  }
+
+  const bodyText = await page.locator('body').innerText({ timeout: 5_000 }).catch(() => '');
+  const cartError = bodyText.match(/nie dodano|nie udało się|błąd.*koszyk/i);
+
+  if (cartError) {
+    throw new Error(`Ticket was not added to cart: ${cartError[0]}`);
+  }
+
+  if (!addedToCart) {
+    throw new Error('Ticket was not added to cart after clicking DODAJ DO KOSZYKA');
+  }
+
+  logInfo('Ticket added to cart', { watchId: watch.id });
+  await page.waitForTimeout(1_000);
 }
 
 async function hasJourneyStep(page: Page): Promise<boolean> {
@@ -360,16 +415,7 @@ async function hasJourneyStep(page: Page): Promise<boolean> {
 }
 
 async function hasSummaryContent(page: Page): Promise<boolean> {
-  if ((await page.getByRole('button', { name: /dodaj do koszyka/i }).count()) > 0) {
-    return true;
-  }
-
-  const bodyText = await page
-    .locator('body')
-    .innerText({ timeout: 5_000 })
-    .catch(() => '');
-
-  return /Przydzielono|Przydzielone|wagon\s*\d+|Miejsce\s*\d+/i.test(bodyText);
+  return (await page.getByRole('button', { name: /dodaj do koszyka/i }).count()) > 0;
 }
 
 type BookingStepTarget = 'class_or_journey' | 'journey';

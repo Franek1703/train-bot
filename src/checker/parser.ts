@@ -61,8 +61,21 @@ export function parseAvailabilityText(rawStatus: string): AvailabilityResult {
 }
 
 export function extractSeatAssignment(text: string): string | undefined {
-  return text
-    .match(/Wagon\s+\d+,\s*miejsce\s+\d+(?:,\s*[^\n\r]+)?/i)?.[0]
-    ?.replace(/\s+/g, ' ')
-    .trim();
+  const inline = text.match(/Wagon\s+\d+,\s*miejsce\s+\d+(?:,\s*[^\n\r]+)?/i)?.[0];
+  if (inline) {
+    return inline.replace(/\s+/g, ' ').trim();
+  }
+
+  const wagonMatch = text.match(/Wagon\s+(\d+)/i);
+  const seatMatch = text.match(/miejsce\s+(\d+)/i);
+  if (!wagonMatch || !seatMatch) {
+    return undefined;
+  }
+
+  const position = text.match(/miejsce\s+\d+(?:[,\s]+([^\n\r]+))?/i)?.[1]?.replace(/\s+/g, ' ').trim();
+  if (position && !/^wagon/i.test(position)) {
+    return `Wagon ${wagonMatch[1]}, miejsce ${seatMatch[1]}, ${position}`;
+  }
+
+  return `Wagon ${wagonMatch[1]}, miejsce ${seatMatch[1]}`;
 }
