@@ -239,7 +239,29 @@ async function proceedToSummary(page: Page, watch: Watch): Promise<void> {
   logInfo('Clicking proceed to payment button', { watchId: watch.id });
   await proceedButton.scrollIntoViewIfNeeded();
   await proceedButton.click({ timeout: 10_000 });
+  try {
+    await waitForPostProceedTarget(page);
+  } catch (error) {
+    if (!(await hasJourneyStep(page)) || !(await proceedButton.isVisible().catch(() => false))) {
+      throw error;
+    }
 
+    const pageState = await getPageState(page);
+    logInfo('Proceed click did not advance from journey page; retrying once', {
+      watchId: watch.id,
+      currentUrl: pageState.currentUrl,
+      title: pageState.title,
+      bodyPreview: pageState.bodyPreview,
+    });
+
+    await page.waitForTimeout(1_000);
+    await proceedButton.scrollIntoViewIfNeeded();
+    await proceedButton.click({ timeout: 10_000, force: true });
+    await waitForPostProceedTarget(page);
+  }
+}
+
+async function waitForPostProceedTarget(page: Page): Promise<void> {
   await page
     .getByRole('button', { name: /^zaloguj się$/i })
     .or(page.getByRole('button', { name: /dodaj do koszyka/i }))
