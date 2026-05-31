@@ -15,6 +15,8 @@ const AVAILABLE_WITHOUT_SEAT_PATTERNS = [
 ];
 
 const SOLD_OUT_PATTERNS = [
+  /brak możliwości wydania biletu/i,
+  /wysokiej frekwencji/i,
   /brak miejsc/i,
   /wyprzedane/i,
   /sold out/i,

@@ -20,6 +20,14 @@ describe('normalizeAvailabilityStatus', () => {
     expect(normalizeAvailabilityStatus('Brak miejsc')).toBe('SOLD_OUT');
   });
 
+  it('detects high-occupancy ticket issuance blocks as sold out', () => {
+    expect(
+      normalizeAvailabilityStatus(
+        'Brak możliwości wydania biletu z powodu wysokiej frekwencji.',
+      ),
+    ).toBe('SOLD_OUT');
+  });
+
   it('falls back to unknown for ambiguous text', () => {
     expect(normalizeAvailabilityStatus('Sprawdź szczegóły połączenia')).toBe('UNKNOWN');
   });

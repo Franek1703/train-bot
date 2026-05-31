@@ -38,7 +38,36 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
       const journeyScreenshotPath = await selectTravelClass(page, watch);
       await proceedToSummary(page, watch);
       await loginIfRequired(page, watch);
-      await waitForSummary(page, watch);
+      const summaryState = await waitForSummary(page, watch);
+
+      if (summaryState === 'overbooked') {
+        const overbookedScreenshotPath = await savePageScreenshot(page, watch.id, 'overbooked');
+        const pageState = await getPageState(page);
+
+        logInfo('Intercity reported ticket issuance blocked by high occupancy', {
+          watchId: watch.id,
+          currentUrl: pageState.currentUrl,
+          bodyPreview: pageState.bodyPreview,
+        });
+
+        return resultFromStatus('SOLD_OUT', {
+          trainNumber: watch.trainNumber ?? undefined,
+          departureTime: watch.departureTime ?? undefined,
+          purchaseUrl: page.url(),
+          rawStatus: 'Ticket issuance blocked by high occupancy',
+          rawPayload: {
+            currentUrl: pageState.currentUrl,
+            pageState,
+            stepScreenshots: {
+              list: listScreenshotPath,
+              journey: journeyScreenshotPath,
+              overbooked: overbookedScreenshotPath,
+            },
+          },
+          screenshotPath: overbookedScreenshotPath ?? journeyScreenshotPath ?? listScreenshotPath,
+          durationMs: Date.now() - startedAt,
+        });
+      }
 
       const summaryScreenshotPath = await savePageScreenshot(page, watch.id, 'summary');
 
@@ -372,10 +401,23 @@ async function loginIfRequired(page: Page, watch: Watch): Promise<void> {
   await page.waitForTimeout(3_000);
 }
 
-async function waitForSummary(page: Page, watch: Watch): Promise<void> {
+type SummaryWaitState = 'summary' | 'overbooked';
+
+async function waitForSummary(page: Page, watch: Watch): Promise<SummaryWaitState> {
   logInfo('Waiting for summary page', { watchId: watch.id });
-  await page.getByRole('button', { name: /dodaj do koszyka/i }).first().waitFor({ timeout: 45_000 });
+  const addToCartButton = page.getByRole('button', { name: /dodaj do koszyka/i }).first();
+  const overbookedWarning = page
+    .getByText(/brak możliwości wydania biletu|wysokiej frekwencji/i)
+    .first();
+
+  await addToCartButton.or(overbookedWarning).first().waitFor({ timeout: 45_000 });
   await page.waitForTimeout(2_000);
+
+  if ((await overbookedWarning.count()) > 0 && (await overbookedWarning.isVisible())) {
+    return 'overbooked';
+  }
+
+  return 'summary';
 }
 
 async function readSeatAssignment(page: Page, watchId: string): Promise<string | undefined> {
