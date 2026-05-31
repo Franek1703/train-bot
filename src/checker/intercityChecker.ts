@@ -196,8 +196,8 @@ async function selectConnection(page: Page, watch: Watch): Promise<string | unde
     `kup bilet.*${watch.departureTime.replace(':', '\\:')}`,
     'i',
   );
-  const buyButton = page.getByRole('button', { name: departurePattern }).first();
-  const buyButtonCount = await buyButton.count();
+  const buyButton = await findMatchingBuyButton(page, watch, departurePattern);
+  const buyButtonCount = buyButton ? 1 : 0;
 
   logInfo('Matching search result cards found', {
     watchId: watch.id,
@@ -206,7 +206,7 @@ async function selectConnection(page: Page, watch: Watch): Promise<string | unde
     count: buyButtonCount,
   });
 
-  if (buyButtonCount === 0) {
+  if (!buyButton) {
     throw new Error(
       `Could not find train card for ${watch.trainNumber} at ${watch.departureTime}`,
     );
@@ -225,6 +225,66 @@ async function selectConnection(page: Page, watch: Watch): Promise<string | unde
   await waitForBookingStep(page, watch.id, 'class_or_journey');
 
   return listScreenshotPath;
+}
+
+async function findMatchingBuyButton(
+  page: Page,
+  watch: Watch,
+  departurePattern: RegExp,
+): Promise<Locator | undefined> {
+  const accessibleBuyButton = page.getByRole('button', { name: departurePattern }).first();
+  if ((await accessibleBuyButton.count()) > 0) {
+    return accessibleBuyButton;
+  }
+
+  const trainPattern = trainNumberRegex(watch.trainNumber!);
+  const departureTime = watch.departureTime!;
+  const resultCards = page.locator('div, article, li, section').filter({
+    has: page.getByRole('button', { name: /kup bilet/i }),
+  });
+  const resultCardCount = await resultCards.count();
+  let bestMatch:
+    | {
+        button: Locator;
+        text: string;
+      }
+    | undefined;
+
+  for (let index = 0; index < resultCardCount; index += 1) {
+    const card = resultCards.nth(index);
+    const text = await card.innerText({ timeout: 2_000 }).catch(() => '');
+
+    if (!text.includes(departureTime) || !trainPattern.test(text)) {
+      continue;
+    }
+
+    const cardBuyButton = card.getByRole('button', { name: /kup bilet/i }).first();
+    if ((await cardBuyButton.count()) === 0) {
+      continue;
+    }
+
+    if (bestMatch && text.length >= bestMatch.text.length) {
+      continue;
+    }
+
+    bestMatch = {
+      button: cardBuyButton,
+      text,
+    };
+  }
+
+  if (bestMatch) {
+    logInfo('Matched train card using separated buy button layout', {
+      watchId: watch.id,
+      trainNumber: watch.trainNumber,
+      departureTime: watch.departureTime,
+      cardPreview: compactPreview(bestMatch.text, 300),
+    });
+
+    return bestMatch.button;
+  }
+
+  return undefined;
 }
 
 async function selectTravelClass(page: Page, watch: Watch): Promise<string | undefined> {
