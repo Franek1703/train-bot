@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3001';
+const API_BASE_URL = resolveApiBaseUrl();
 
 export interface Watch {
   id: string;
@@ -92,4 +92,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   return payload as T;
+}
+
+function resolveApiBaseUrl(): string {
+  const configuredUrl = import.meta.env.VITE_API_BASE_URL;
+  if (configuredUrl) {
+    return configuredUrl;
+  }
+
+  return `${window.location.protocol}//${window.location.hostname}:3001`;
 }

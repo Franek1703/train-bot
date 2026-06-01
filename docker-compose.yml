@@ -41,7 +41,7 @@ services:
       ADD_TO_CART: ${ADD_TO_CART:-true}
       API_HOST: 0.0.0.0
       API_PORT: 3001
-      DASHBOARD_ORIGIN: http://localhost:5173
+      DASHBOARD_ORIGIN: ${DASHBOARD_ORIGIN:-*}
       ARTIFACTS_DIR: /app/runtime/artifacts
       SCREENSHOTS_DIR: /app/runtime/artifacts
     ports:
@@ -54,7 +54,7 @@ services:
       context: ./dashboard
       dockerfile: Dockerfile
       args:
-        VITE_API_BASE_URL: http://localhost:3001
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
     container_name: train-bot-dashboard
     depends_on:
       - bot-api
