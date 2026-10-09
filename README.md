@@ -7,8 +7,9 @@ and class, checks whether a seat is assigned on the summary page, adds the
 ticket to the cart, and sends a Resend email alert so the user can finish
 payment manually.
 
-This project does not complete payment, bypass CAPTCHA, or automatically buy the
-ticket.
+An optional BLIK mode prepares checkout, keeps the Intercity browser session open,
+and lets the user submit a BLIK code from the dashboard. The user confirms payment
+in their banking app. The bot does not bypass CAPTCHA.
 
 ## Stack
 
@@ -42,6 +43,7 @@ ARTIFACTS_DIR=./runtime/artifacts
 API_HOST=0.0.0.0
 API_PORT=3001
 DASHBOARD_ORIGIN=http://localhost:5173
+DASHBOARD_URL=http://localhost:5173
 ```
 
 ## Scripts
@@ -51,6 +53,7 @@ npm run dev
 npm run build
 npm start
 npm test
+npm run test:browser
 npm run db:migrate
 npm run check:once
 npm run notify:test
@@ -115,6 +118,46 @@ After a watcher reaches `AVAILABLE_WITH_SEAT` and the email is sent, the bot
 automatically sets that watcher to inactive so it stops checking but remains
 visible with its history in the dashboard.
 
+## BLIK checkout
+
+Enable **Przygotuj zakup z płatnością BLIK** when creating or editing a watcher,
+and accept the checkbox authorizing the required Intercity terms. The bot uses
+the passenger name on the configured Intercity account, without invoice or donation.
+Existing watchers stay in notification mode unless you enable this option.
+
+Once a seat is assigned, the bot opens payment and emails a dashboard link.
+Open that link, review the passenger, seat and price, enter the six-digit BLIK
+code, and click **Zapłać**. Confirm the transaction in your banking app.
+Dashboard refreshes or closure do not close the bot's browser session.
+
+The code deadline is **12 minutes from the reservation start**, or earlier if
+Intercity's timer allows less time; the bot reserves three minutes for deferral.
+Preparation and email delivery consume this time. At the deadline, the bot
+clicks **Zapłać później** if payment has not started. It reports deferral only
+when Intercity confirms it; deferral does not itself mean purchase or guarantee
+an extended reservation. During a submitted payment it waits for the result.
+An explicitly rejected code can be replaced before the deadline.
+
+All checks use one Intercity account and run sequentially. While a purchase
+session is active, other checks pause and resume after it ends. The purchased
+or deferred watch remains stopped. After a browser/backend crash, its result
+becomes `UNKNOWN`; inspect the Intercity order before explicitly resuming.
+
+Set `DASHBOARD_URL` to the dashboard address you actually open; it is used in
+email links and payment origin checks. Apply the additive migration with
+`npm run db:deploy` before starting the updated backend; Docker applies it on
+startup. Run one backend process for this account. BLIK mode requires the
+long-running backend; `check:once` refuses active BLIK watches.
+
+Browser tests use local fixtures only and require a built dashboard:
+
+```bash
+npm --prefix dashboard run build
+npm run test:browser
+```
+
+See [BLIK checkout documentation](docs/blik_purchase.md) for API and state details.
+
 ## API
 
 The bot API is local/private and has no authentication in this version.
@@ -129,6 +172,8 @@ POST   /watches/:id/stop
 POST   /watches/:id/resume
 DELETE /watches/:id
 POST   /watches/:id/check-now
+GET    /watches/:id/purchase
+POST   /purchases/:id/blik
 GET    /errors
 GET    /errors/:id
 GET    /artifacts/:artifactId

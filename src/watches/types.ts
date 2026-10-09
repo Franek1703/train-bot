@@ -11,6 +11,8 @@ export interface WatchConfig {
   seatRequired: boolean;
   intervalMinutes: number;
   active: boolean;
+  purchaseMode?: 'notify' | 'blik';
+  purchaseConsent?: boolean;
 }
 
 export interface WatchesConfigFile {
@@ -31,4 +33,6 @@ export interface WatchInput {
   intervalMinutes: number;
   active?: boolean;
   notificationTarget?: string;
+  purchaseMode?: 'notify' | 'blik';
+  purchaseConsent?: boolean;
 }

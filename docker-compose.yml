@@ -17,6 +17,7 @@ services:
       retries: 10
 
   bot-api:
+    stop_grace_period: 90s
     build:
       context: .
       dockerfile: Dockerfile
@@ -42,6 +43,7 @@ services:
       API_HOST: 0.0.0.0
       API_PORT: 3001
       DASHBOARD_ORIGIN: ${DASHBOARD_ORIGIN:-*}
+      DASHBOARD_URL: ${DASHBOARD_URL:-http://localhost:5173}
       ARTIFACTS_DIR: /app/runtime/artifacts
       SCREENSHOTS_DIR: /app/runtime/artifacts
     ports:

@@ -6,6 +6,8 @@ import { env } from '../config/env.js';
 import { recordCheckLog } from '../scheduler/checkLogger.js';
 import { extractSeatAssignment, resultFromStatus } from './parser.js';
 import type { AvailabilityChecker, AvailabilityResult } from './types.js';
+import { purchaseManager } from '../purchases/index.js';
+import { IntercityPaymentPage, readReservationExpiry } from '../purchases/intercityPaymentPage.js';
 
 export class PlaywrightIntercityChecker implements AvailabilityChecker {
   async checkAvailability(watch: Watch): Promise<AvailabilityResult> {
@@ -26,6 +28,8 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
       timezoneId: env.TIMEZONE,
     });
     const page = await context.newPage();
+    let transferred = false;
+    let reservationExpiresAt: Date | undefined;
 
     try {
       if (!watch.journeyUrl) {
@@ -39,6 +43,10 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
       await proceedToSummary(page, watch);
       await loginIfRequired(page, watch);
       const summaryState = await waitForSummary(page, watch);
+      if (watch.purchaseMode === 'blik' && summaryState === 'summary') {
+        // Read before screenshots and seat polling consume reservation time.
+        reservationExpiresAt = await readReservationExpiry(page).catch(() => undefined);
+      }
 
       if (summaryState === 'overbooked') {
         const overbookedScreenshotPath = await savePageScreenshot(page, watch.id, 'overbooked');
@@ -102,6 +110,24 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
         addToCart: env.ADD_TO_CART,
       });
 
+      if (watch.purchaseMode === 'blik') {
+        if (!watch.purchaseConsent) throw new Error('BLIK purchase requires consent');
+        transferred = true;
+        const purchase = await purchaseManager.prepare(watch.id, seatAssignment, reservationExpiresAt,
+          new IntercityPaymentPage(page, browser, seatAssignment, watch));
+        return resultFromStatus('AVAILABLE_WITH_SEAT', {
+          trainNumber: watch.trainNumber ?? undefined,
+          departureTime: watch.departureTime ?? undefined,
+          purchaseSessionId: purchase.id,
+          purchaseUrl: purchase.intercityUrl ?? undefined,
+          price: purchase.price ?? undefined,
+          rawStatus: seatAssignment,
+          rawPayload: { seatAssignment, purchaseSessionId: purchase.id },
+          screenshotPath: summaryScreenshotPath,
+          durationMs: Date.now() - startedAt,
+        });
+      }
+
       if (env.ADD_TO_CART) {
         await addToCart(page, watch);
         const cartScreenshotPath = await savePageScreenshot(page, watch.id, 'cart');
@@ -151,7 +177,7 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
         durationMs: Date.now() - startedAt,
       });
     } finally {
-      await browser.close();
+      if (!transferred) await browser.close();
     }
   }
 }

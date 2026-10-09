@@ -31,6 +31,7 @@ const envSchema = z.object({
   API_HOST: z.string().default('0.0.0.0'),
   API_PORT: z.coerce.number().int().min(1).max(65535).default(3001),
   DASHBOARD_ORIGIN: z.string().default('http://localhost:5173'),
+  DASHBOARD_URL: z.string().url().default('http://localhost:5173'),
 });
 
 export const env = envSchema.parse(process.env);

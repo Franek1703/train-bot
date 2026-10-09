@@ -18,6 +18,8 @@ export const watchInputSchema = z.object({
   intervalMinutes: z.number().int().min(2).default(5),
   active: z.boolean().default(true),
   notificationTarget: z.string().email().optional(),
+  purchaseMode: z.enum(['notify', 'blik']).default('notify'),
+  purchaseConsent: z.boolean().default(false),
 });
 
 export const watchUpdateSchema = watchInputSchema.partial();

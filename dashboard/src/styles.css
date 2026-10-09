@@ -220,6 +220,20 @@ main {
   margin: 6px 0;
 }
 
+.purchase-panel {
+  background: #f0f8f5;
+  border: 1px solid #b8d6c9;
+  border-radius: 8px;
+  margin: 16px 0;
+  padding: 16px;
+}
+.purchase-panel h4 { margin-top: 0; }
+.purchase-panel dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; }
+.purchase-panel dd { margin: 0; overflow-wrap: anywhere; }
+.purchase-panel form { display: grid; gap: 10px; }
+.purchase-panel a { color: #1e6f5c; }
+.purchase-timer { font-size: 1.2rem; font-variant-numeric: tabular-nums; font-weight: 700; }
+
 @media (max-width: 1100px) {
   .app-shell,
   .workbench {

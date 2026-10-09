@@ -1,3 +1,10 @@
+# Current checkout extension
+
+The optional BLIK workflow is described in [BLIK checkout](blik_purchase.md).
+The original MVP design below describes notification mode. Its exclusions of
+automatic payment do not apply to the optional workflow with a user-supplied
+BLIK code and bank confirmation.
+
 ````md
 # PKP Intercity Seat Availability Monitor
 

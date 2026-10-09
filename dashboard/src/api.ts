@@ -17,6 +17,8 @@ export interface Watch {
   lastCheckedAt?: string;
   lastNotifiedAt?: string;
   consecutiveErrors: number;
+  purchaseMode: 'notify' | 'blik';
+  purchaseConsent: boolean;
 }
 
 export interface AvailabilityCheck {
@@ -65,6 +67,22 @@ export interface WatchInput {
   intervalMinutes: number;
   active: boolean;
   notificationTarget?: string;
+  purchaseMode: 'notify' | 'blik';
+  purchaseConsent: boolean;
+}
+
+export interface PurchaseSession {
+  id: string;
+  watchId: string;
+  state: 'PREPARING' | 'WAITING_FOR_BLIK' | 'PAYMENT_PENDING' | 'PAID' | 'DEFERRED' | 'EXPIRED' | 'FAILED' | 'UNKNOWN';
+  passengerName: string | null;
+  seatAssignment: string;
+  price: string | null;
+  expiresAt: string;
+  acceptCodeUntil: string;
+  errorMessage: string | null;
+  intercityUrl: string | null;
+  orderNumber: string | null;
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
