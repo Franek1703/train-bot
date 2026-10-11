@@ -14,6 +14,13 @@ The watcher is stopped in the same database transaction that creates its session
 The payment page must match the watched train, departure, date, route, class,
 passenger count and assigned seat. Before submission, the bot rechecks booking
 details, passenger and amount; changed details do not initiate a payment.
+The summary's active payment button is selected separately from the disabled
+progress-bar button with the same name. Passenger data is read on the payment
+screen. Preparation failures appear in the check log and session error without
+being replaced by a subsequent deferral error.
+Hidden native radio/checkbox inputs are selected through their visible labels,
+then their checked state is verified. The BLIK code field is awaited only after
+the BLIK method has been selected.
 
 After checkout is prepared, email links to `DASHBOARD_URL?watch=<watch ID>`.
 The dashboard shows passenger, seat, price, deadline and status. The user supplies

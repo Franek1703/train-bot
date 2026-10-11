@@ -112,9 +112,11 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
 
       if (watch.purchaseMode === 'blik') {
         if (!watch.purchaseConsent) throw new Error('BLIK purchase requires consent');
+        logInfo('Preparing BLIK payment page', { watchId: watch.id });
         transferred = true;
         const purchase = await purchaseManager.prepare(watch.id, seatAssignment, reservationExpiresAt,
           new IntercityPaymentPage(page, browser, seatAssignment, watch));
+        logInfo('BLIK checkout preparation finished', { watchId: watch.id, purchaseId: purchase.id, state: purchase.state, errorMessage: purchase.errorMessage });
         return resultFromStatus('AVAILABLE_WITH_SEAT', {
           trainNumber: watch.trainNumber ?? undefined,
           departureTime: watch.departureTime ?? undefined,

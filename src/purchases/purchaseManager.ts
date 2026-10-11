@@ -1,4 +1,5 @@
-import { PaymentNotSubmittedError, PurchaseError, codeDeadline, type PurchasePage, type PurchaseRecord, type PurchaseRepository, type PurchaseState } from './types.js';
+import { PaymentNotSubmittedError, PurchasePreparationError, PurchaseError, codeDeadline, type PurchasePage, type PurchaseRecord, type PurchaseRepository, type PurchaseState } from './types.js';
+import { recordCheckLog } from '../scheduler/checkLogger.js';
 
 interface LivePurchase { record: PurchaseRecord; page: PurchasePage; operation: Promise<void> | null }
 
@@ -64,10 +65,13 @@ export class PurchaseManager {
       else this.emit(live.record);
       this.startTimer();
       return live.record;
-    } catch {
+    } catch (error) {
       if (live) {
-        try { await this.defer(live, !expiresAt); }
-        catch { await this.finish(live, 'FAILED', 'Nie udało się przygotować ani odroczyć płatności.'); }
+        const reason = error instanceof PurchasePreparationError ? error.message : 'Nie udało się przygotować strony płatności BLIK.';
+        recordCheckLog('error', 'Purchase preparation failed', { purchaseId: live.record.id, reason });
+        console.error(JSON.stringify({ level: 'error', message: 'Purchase preparation failed', purchaseId: live.record.id, reason }));
+        try { await this.defer(live, !expiresAt, reason); }
+        catch { await this.finish(live, 'FAILED', `${reason} Nie udało się odroczyć płatności.`); }
         return live.record;
       }
       await page.close().catch(() => {});
@@ -152,7 +156,7 @@ export class PurchaseManager {
     }
   }
 
-  private async defer(live: LivePurchase, unknownClock = false): Promise<void> {
+  private async defer(live: LivePurchase, unknownClock = false, failureReason?: string): Promise<void> {
     if (!unknownClock && this.now() >= live.record.expiresAt) {
       await this.finish(live, 'EXPIRED', 'Upłynął czas rezerwacji.');
       return;
@@ -162,9 +166,9 @@ export class PurchaseManager {
       live.record = await this.repository.update(live.record.id, {
         intercityUrl: result.intercityUrl, orderNumber: result.orderNumber,
       });
-      await this.finish(live, 'DEFERRED');
+      await this.finish(live, 'DEFERRED', failureReason ?? null);
     } else {
-      await this.finish(live, 'FAILED', 'Intercity nie potwierdziło opcji „Zapłać później”.');
+      await this.finish(live, 'FAILED', [failureReason, 'Intercity nie potwierdziło opcji „Zapłać później”.'].filter(Boolean).join(' '));
     }
   }
 

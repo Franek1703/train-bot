@@ -1,7 +1,7 @@
 import type { Browser, Locator, Page } from 'playwright';
 import { extractSeatAssignment } from '../checker/parser.js';
 import type { PaymentObservation, PurchasePage } from './types.js';
-import { PaymentNotSubmittedError } from './types.js';
+import { PaymentNotSubmittedError, PurchasePreparationError } from './types.js';
 
 interface BookingExpectation {
   trainNumber: string | null; departureTime: string | null; travelClass: number; passengers: number;
@@ -10,7 +10,8 @@ interface BookingExpectation {
 
 const months = ['stycznia', 'lutego', 'marca', 'kwietnia', 'maja', 'czerwca', 'lipca', 'sierpnia', 'września', 'października', 'listopada', 'grudnia'];
 function stationText(text: string): string {
-  return text.toLocaleLowerCase('pl-PL').replace(/główn[yae]/g, 'gł').replace(/zachodni[ae]/g, 'zach')
+  return text.toLocaleLowerCase('pl-PL').normalize('NFD').replace(/\p{M}/gu, '').replace(/ł/g, 'l')
+    .replace(/glown[yae]/g, 'gl').replace(/zachodni[ae]/g, 'zach')
     .replace(/wschodni[ae]/g, 'wsch').replace(/centralna/g, 'centr').replace(/[.,-]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -53,24 +54,31 @@ export class IntercityPaymentPage implements PurchasePage {
 
   private verifyBooking(text: string): void {
     if (extractSeatAssignment(text) !== this.seatAssignment || /brak gwarancji miejsca/i.test(text)) {
-      throw new Error('Brak potwierdzonego miejsca w podsumowaniu.');
+      throw new PurchasePreparationError('Brak potwierdzonego miejsca w podsumowaniu.');
     }
     if (!this.expected) return;
     const { trainNumber, departureTime, travelClass, passengers } = this.expected;
-    const trainPattern = trainNumber?.split(/\s+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
-    if ((trainPattern && !new RegExp(`\\b${trainPattern}\\b`, 'i').test(text))
-      || (departureTime && !text.includes(departureTime))
-      || !new RegExp(`\\b${travelClass}\\s+klasa`, 'i').test(text)
-      || !new RegExp(`\\b${passengers}\\s+pasażer`, 'i').test(text)
-      || (this.expected.travelDate && !new RegExp(`\\b${this.expected.travelDate.getUTCDate()}\\s+${months[this.expected.travelDate.getUTCMonth()]}`, 'i').test(text))
-      || (this.expected.origin && !stationText(text).includes(stationText(this.expected.origin)))
-      || (this.expected.destination && !stationText(text).includes(stationText(this.expected.destination)))) {
-      throw new Error('Pociąg, godzina, klasa lub liczba pasażerów nie zgadza się z watcherem.');
+    // Intercity renders the category as a logo, which may have no innerText.
+    const trainParts = trainNumber?.trim().match(/^([a-z]+)\s*(\d+)$/i);
+    const trainPattern = trainParts ? `(?:${trainParts[1]}\\s*)?${trainParts[2]}`
+      : trainNumber?.split(/\s+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
+    const checks: Array<[string, boolean]> = [
+      ['Numer pociągu', !trainPattern || new RegExp(`\\b${trainPattern}\\b`, 'i').test(text)],
+      ['Godzina odjazdu', !departureTime || text.includes(departureTime)],
+      ['Klasa', new RegExp(`\\b${travelClass}\\s+klasa`, 'i').test(text)],
+      ['Liczba pasażerów', new RegExp(`\\b${passengers}\\s+pasażer`, 'i').test(text)],
+      ['Data podróży', !this.expected.travelDate || new RegExp(`\\b${this.expected.travelDate.getUTCDate()}\\s+${months[this.expected.travelDate.getUTCMonth()]}`, 'i').test(text)],
+      ['Stacja początkowa', !this.expected.origin || stationText(text).includes(stationText(this.expected.origin))],
+      ['Stacja docelowa', !this.expected.destination || stationText(text).includes(stationText(this.expected.destination))],
+    ];
+    for (const [field, matches] of checks) {
+      if (!matches) throw new PurchasePreparationError(`${field} w podsumowaniu nie zgadza się z watcherem.`);
     }
   }
 
   private priceFromText(text: string): string | undefined {
-    return text.match(/Do zapłaty\s*([\d\s]+[,.]\d{2})\s*zł/i)?.[1]?.replace(/\s/g, '');
+    // Intercity includes "Obecna cena" in innerText between the total heading and amount.
+    return text.match(/Do zapłaty\s*(?:Obecna cena\s*)?(?:PTU\s+\d+(?:[,.]\d+)?%\s*)?([\d\s]+[,.]\d{2})\s*zł/i)?.[1]?.replace(/\s/g, '');
   }
 
   private async body(): Promise<string> {
@@ -80,38 +88,52 @@ export class IntercityPaymentPage implements PurchasePage {
   async prepare() {
     const summary = await this.body();
     this.verifyBooking(summary);
-    const passengerName = (await this.passenger.inputValue()).trim();
-    if (!passengerName || /nazwisko podróżnego pokrywa się|zmień dane podróżnego/i.test(summary)) {
-      throw new Error('Nieprawidłowe dane podróżnego na koncie Intercity.');
-    }
-    const pay = this.page.getByRole('button', { name: /^płatność$/i });
+    const summaryPassenger = await this.passenger.isVisible().catch(() => false)
+      ? (await this.passenger.inputValue()).trim() : undefined;
+    // The progress bar also contains a disabled button named "Płatność".
+    const pay = this.page.getByRole('button', { name: /^płatność$/i })
+      .and(this.page.locator('button:not([disabled]):not([aria-disabled="true"])'));
     await pay.waitFor({ state: 'visible', timeout: 20_000 });
     await pay.click();
-    await this.code.or(this.page.getByRole('radio', { name: /^BLIK$/i })).first()
-      .waitFor({ state: 'visible', timeout: 20_000 });
+    await this.passenger.waitFor({ state: 'visible', timeout: 20_000 });
     const paymentName = (await this.passenger.inputValue()).trim();
-    if (paymentName !== passengerName) throw new Error('Dane podróżnego zmieniły się podczas przygotowania płatności.');
+    if (!paymentName || /nazwisko podróżnego pokrywa się|zmień dane podróżnego/i.test(await this.body())) {
+      throw new Error('Nieprawidłowe dane podróżnego na koncie Intercity.');
+    }
+    if (summaryPassenger !== undefined && paymentName !== summaryPassenger) {
+      throw new Error('Dane podróżnego zmieniły się podczas przygotowania płatności.');
+    }
+    const passengerName = paymentName;
     await this.setCheckbox(/chcę podać dane do faktury/i, false, false);
     await this.setCheckbox(/akceptuję regulamin e-IC/i, true, true);
     await this.setCheckbox(/akceptuję regulamin Moje IC/i, true, false);
-    const blik = this.page.getByRole('radio', { name: /^BLIK$/i });
-    await blik.check();
+    const blik = this.page.getByLabel(/^BLIK$/i).and(this.page.locator('input[type="radio"]')).first();
+    await this.setChoice(blik, /^BLIK$/i, true);
     const donation = this.page.getByRole('switch', { name: /darowizna/i })
-      .or(this.page.getByRole('checkbox', { name: /darowizna/i })).first();
-    if (await donation.count()) await donation.setChecked(false);
+      .or(this.page.getByLabel(/darowizna/i).and(this.page.locator('input[type="checkbox"]'))).first();
+    if (await donation.count()) await this.setChoice(donation, /darowizna/i, false);
     const text = await this.body();
     this.verifyBooking(text);
     const price = this.priceFromText(text);
-    if (!price || Number(price.replace(',', '.')) <= 0) throw new Error('Brak kwoty płatności BLIK.');
+    if (!price || Number(price.replace(',', '.')) <= 0) throw new PurchasePreparationError('Brak kwoty płatności BLIK.');
     await this.code.waitFor({ state: 'visible' });
     this.prepared = { passengerName, price };
     return { passengerName, price: `${price} zł`, intercityUrl: pageLink(this.page), expiresAt: await readReservationExpiry(this.page) };
   }
 
   private async setCheckbox(name: RegExp, checked: boolean, required: boolean): Promise<void> {
-    const checkbox = this.page.getByRole('checkbox', { name }).first();
-    if (await checkbox.count()) await checkbox.setChecked(checked);
-    else if (required) throw new Error('Nie znaleziono wymaganego regulaminu.');
+    const checkbox = this.page.getByLabel(name).and(this.page.locator('input[type="checkbox"]')).first();
+    if (await checkbox.count()) await this.setChoice(checkbox, name, checked);
+    else if (required) throw new PurchasePreparationError('Nie znaleziono wymaganego regulaminu.');
+  }
+
+  private async setChoice(input: Locator, label: RegExp, checked: boolean): Promise<void> {
+    if (await input.isChecked() === checked) return;
+    if (await input.isVisible()) await input.setChecked(checked);
+    else await this.page.locator('label').filter({ hasText: label }).first().click();
+    if (await input.isChecked() !== checked) {
+      throw new PurchasePreparationError('Intercity nie potwierdziło wyboru metody płatności lub regulaminu.');
+    }
   }
 
   async submit(code: string): Promise<void> {

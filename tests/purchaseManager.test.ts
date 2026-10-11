@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PurchaseManager } from '../src/purchases/purchaseManager.js';
-import { PaymentNotSubmittedError, codeDeadline, type PurchasePage, type PurchaseRecord, type PurchaseRepository } from '../src/purchases/types.js';
+import { PaymentNotSubmittedError, PurchasePreparationError, codeDeadline, type PurchasePage, type PurchaseRecord, type PurchaseRepository } from '../src/purchases/types.js';
 
 const start = new Date('2026-10-09T12:00:00Z');
 const expiresAt = new Date(start.getTime() + 15 * 60_000);
@@ -45,6 +45,15 @@ describe('BLIK purchase lifecycle', () => {
   afterEach(async () => {
     for (const manager of managers.splice(0)) await manager.shutdown();
     vi.useRealTimers();
+  });
+
+  it('preserves the booking validation error when deferral is unavailable', async () => {
+    const h = harness();
+    h.page.prepare.mockRejectedValue(new PurchasePreparationError('Liczba pasażerów w podsumowaniu nie zgadza się z watcherem.'));
+    h.page.defer.mockResolvedValue({ confirmed: false });
+    await h.manager.prepare('watch-1', 'seat', expiresAt, h.page);
+    expect(h.record()).toMatchObject({ state: 'FAILED', errorMessage: expect.stringContaining('Liczba pasażerów') });
+    expect(h.page.submit).not.toHaveBeenCalled();
   });
 
   it('retains the browser, publishes details and closes only after confirmed purchase', async () => {

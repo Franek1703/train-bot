@@ -57,6 +57,9 @@ export class PurchaseError extends Error {
 // Only for failures proven to happen before clicking the payment button.
 export class PaymentNotSubmittedError extends Error {}
 
+// Messages contain only our fixed diagnostics, never browser errors or input values.
+export class PurchasePreparationError extends Error {}
+
 export function codeDeadline(expiresAt: Date, now: Date): Date {
   // Infer the start from the site's reservation clock, including preparation time.
   return new Date(Math.min(now.getTime() + 12 * 60_000, expiresAt.getTime() - 3 * 60_000));

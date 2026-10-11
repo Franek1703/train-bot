@@ -50,6 +50,49 @@ function adapter() {
 }
 
 describe('Intercity payment UI adapter', () => {
+  it('clicks visible labels for hidden payment choices and shows the BLIK field after selection', async () => {
+    await page.locator('body').evaluate(() => {
+      for (const input of document.querySelectorAll<HTMLInputElement>('input[type="checkbox"], input[type="radio"]')) {
+        input.style.display = 'none';
+      }
+      const code = document.querySelector<HTMLInputElement>('input[aria-label="Kod BLIK"]')!;
+      code.id = 'blickCode'; code.type = 'number'; code.removeAttribute('aria-label'); code.placeholder = ' ';
+      const label = document.createElement('label'); label.htmlFor = code.id; label.textContent = 'Wpisz kod blik';
+      code.before(label);
+      code.hidden = true;
+      document.querySelector('input[type="radio"]')!.addEventListener('change', () => { code.hidden = false; });
+    });
+    await page.getByText('Do zapłaty', { exact: false }).evaluate((node) => {
+      node.innerHTML = '<span>Do zapłaty<br>Obecna cena<br>33,81 zł</span><span>PTU 8%<br>2,50 zł</span>';
+    });
+    const payment = adapter();
+    expect(await payment.prepare()).toMatchObject({ price: '33,81 zł', passengerName: 'Test Passenger' });
+    expect(await page.getByLabel('BLIK', { exact: true }).isChecked()).toBe(true);
+    expect(await page.getByLabel('Akceptuję Regulamin e-IC').isChecked()).toBe(true);
+    expect(await page.getByLabel('Chcę podać dane do faktury').isChecked()).toBe(false);
+    await payment.submit('012345');
+    expect((await payment.observe()).outcome).toBe('pending');
+  });
+  it('uses passenger data from payment when summary has no name field, a train logo and unaccented watcher names', async () => {
+    await page.locator('body').evaluate((node) => {
+      const progress = document.createElement('nav');
+      progress.innerHTML = '<button disabled>Płatność</button><button aria-disabled="true">Płatność</button>';
+      node.prepend(progress);
+    });
+    await page.getByLabel('Imię i nazwisko').evaluate((node) => {
+      document.querySelector('#payment')!.append(node.parentElement!);
+    });
+    await page.getByText(/NIEDZIELA, 11 PAŹDZIERNIKA/).evaluate((node) => {
+      node.innerHTML = node.innerHTML.replace('IC 8112', '<svg aria-label="IC"></svg> 8112');
+    });
+    const payment = new IntercityPaymentPage(page, { close: vi.fn(async () => {}) } as unknown as Browser, 'Wagon 9, miejsce 17', {
+      trainNumber: 'IC8112', departureTime: '15:27', travelClass: 2, passengers: 1,
+      travelDate: new Date('2026-10-11'), origin: 'Poznan Gł', destination: 'Warszawa Zach',
+    });
+    expect(await payment.prepare()).toMatchObject({ passengerName: 'Test Passenger', price: '33,81 zł' });
+    await payment.submit('012345');
+    expect((await payment.observe()).outcome).toBe('pending');
+  });
   it('opens payment, uses account data, accepts terms and disables invoice/donation', async () => {
     const details = await adapter().prepare();
     expect(details).toMatchObject({ passengerName: 'Test Passenger', price: '33,81 zł', intercityUrl: url });
@@ -114,7 +157,7 @@ describe('Intercity payment UI adapter', () => {
   it('refuses missing passenger data and unreadable clocks', async () => {
     await page.getByLabel('Imię i nazwisko').fill('');
     await expect(adapter().prepare()).rejects.toThrow('podróżnego');
-    await page.getByLabel('Imię i nazwisko').fill('Test Passenger');
+    await page.goto(url);
     await page.locator('#clock').evaluate((node) => { node.textContent = 'Czas na zakup: —'; });
     await expect(adapter().prepare()).rejects.toThrow('licznika');
   });
