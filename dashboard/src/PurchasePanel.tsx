@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { apiGet, apiSend, type PurchaseSession, type Watch } from './api';
+import { apiGet, apiSend, artifactUrl, type PurchaseSession, type Watch } from './api';
 
 const labels: Record<PurchaseSession['state'], string> = {
   PREPARING: 'Przygotowujemy płatność',
@@ -23,6 +23,7 @@ export function PurchasePanel({ watch, onAccountState }: {
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState('');
   const [connected, setConnected] = useState(false);
+  const [failedScreenshotId, setFailedScreenshotId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,6 +85,18 @@ export function PurchasePanel({ watch, onAccountState }: {
           <dt>Do zapłaty</dt><dd>{purchase.price ?? '—'}</dd>
           {purchase.orderNumber && <><dt>Zamówienie</dt><dd>{purchase.orderNumber}</dd></>}
         </dl>
+        {purchase.summaryScreenshotArtifactId ? (
+          <details className="purchase-summary-preview" key={purchase.id}>
+            <summary>Podgląd podsumowania zakupu</summary>
+            <a href={artifactUrl(purchase.summaryScreenshotArtifactId)} target="_blank" rel="noreferrer">Otwórz pełny zrzut w nowej karcie</a>
+            {failedScreenshotId === purchase.summaryScreenshotArtifactId ? (
+              <p role="status">Nie udało się wczytać zrzutu podsumowania.</p>
+            ) : (
+              <img src={artifactUrl(purchase.summaryScreenshotArtifactId)} alt="Podsumowanie zakupu w Intercity" loading="lazy"
+                onError={() => setFailedScreenshotId(purchase.summaryScreenshotArtifactId)} />
+            )}
+          </details>
+        ) : <p className="muted">Zrzut podsumowania zakupu jest jeszcze niedostępny.</p>}
         {purchase.state === 'WAITING_FOR_BLIK' && <>
           <p className="purchase-timer">Czas na podanie kodu: {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}</p>
           <p className="muted">Po tym czasie bot wybierze „Zapłać później”.</p>

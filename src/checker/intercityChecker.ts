@@ -77,15 +77,14 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
         });
       }
 
-      const summaryScreenshotPath = await savePageScreenshot(page, watch.id, 'summary');
+      const seatAssignment = await readSeatAssignment(page, watch.id);
+      const summaryScreenshotPath = await savePageScreenshot(page, watch.id, 'summary', watch.purchaseMode === 'blik');
 
       const stepScreenshots: Record<string, string | undefined> = {
         list: listScreenshotPath,
         journey: journeyScreenshotPath,
         summary: summaryScreenshotPath,
       };
-
-      const seatAssignment = await readSeatAssignment(page, watch.id);
 
       if (!seatAssignment) {
         logInfo('Summary page did not contain assigned seat text', {
@@ -722,8 +721,9 @@ async function savePageScreenshot(
   page: Page,
   watchId: string,
   label: string,
+  required = false,
 ): Promise<string | undefined> {
-  if (!env.SAVE_SCREENSHOTS) {
+  if (!env.SAVE_SCREENSHOTS && !required) {
     return undefined;
   }
 

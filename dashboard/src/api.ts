@@ -83,6 +83,7 @@ export interface PurchaseSession {
   errorMessage: string | null;
   intercityUrl: string | null;
   orderNumber: string | null;
+  summaryScreenshotArtifactId: string | null;
 }
 
 export async function apiGet<T>(path: string): Promise<T> {

@@ -5,7 +5,7 @@ import type { Server } from 'node:net';
 import { ZodError } from 'zod';
 import { z } from 'zod';
 import { env } from '../config/env.js';
-import { getArtifactById } from '../artifacts/artifactRepository.js';
+import { getArtifactById, getPurchaseSummaryArtifactId } from '../artifacts/artifactRepository.js';
 import { listErrors, getErrorById } from '../errors/errorRepository.js';
 import { processSingleWatch } from '../scheduler/scheduler.js';
 import {
@@ -187,7 +187,13 @@ async function handleWatches(context: RouteContext): Promise<void> {
 
   if (request.method === 'GET' && parts.length === 3 && parts[2] === 'purchase') {
     if (!await findWatchById(watchId)) throw new PurchaseError('Watch not found', 404);
-    sendJson(response, 200, { purchase: await latestPurchase(watchId), serverTime: new Date().toISOString(), accountBusy: purchaseManager.busy });
+    const purchase = await latestPurchase(watchId);
+    const summaryScreenshotArtifactId = purchase
+      ? await getPurchaseSummaryArtifactId(watchId, purchase.availabilityCheckId) : null;
+    sendJson(response, 200, {
+      purchase: purchase ? { ...purchase, summaryScreenshotArtifactId } : null,
+      serverTime: new Date().toISOString(), accountBusy: purchaseManager.busy,
+    });
     return;
   }
 

@@ -10,6 +10,16 @@ export async function getArtifactById(artifactId: string): Promise<WatchArtifact
   });
 }
 
+export async function getPurchaseSummaryArtifactId(watchId: string, availabilityCheckId: string | null): Promise<string | null> {
+  if (!availabilityCheckId) return null;
+  const artifact = await prisma.watchArtifact.findFirst({
+    where: { watchId, availabilityCheckId, kind: 'screenshot', label: { startsWith: 'summary-' } },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true },
+  });
+  return artifact?.id ?? null;
+}
+
 export async function createArtifactRecord(args: {
   watchId: string;
   availabilityCheckId?: string;

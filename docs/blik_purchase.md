@@ -28,6 +28,12 @@ a fresh six-digit code and clicks **Zapłać**. The bot submits it on the retain
 Intercity page; the user authorizes the transaction in their banking app.
 Only an explicit Intercity success message marks a purchase `PAID`.
 
+The BLIK panel offers an expandable summary screenshot and a link to the full
+image. It resolves the summary artifact using the purchase's availability check,
+never a screenshot from another attempt. The summary is captured after seat
+assignment and before opening payment, including when `SAVE_SCREENSHOTS=false`.
+If the artifact is not ready yet or cannot load, payment remains available.
+
 ## Deadlines and failure handling
 
 The first reservation timer is read in the summary before seat polling and
@@ -146,3 +152,17 @@ send emails or place real orders. Dashboard screenshots are written under
 Live Intercity verification is separate: a real watched connection must reach
 payment, and actual result messages/selectors must be checked against that site.
 A real BLIK payment requires the user's code and banking-app confirmation.
+
+To verify real PostgreSQL transactions, create a separate database whose name
+ends in `_blik_test`, apply migrations to it, and set both `DATABASE_URL` and
+`TEST_DATABASE_URL` to its connection URL. Never use the application database.
+Run `npx vitest run tests/purchaseRepository.postgres.test.ts`, then
+`npm run test:browser`. The latter switches the dashboard tests to the real
+purchase and watcher repositories. Run these suites sequentially because the
+database enforces one active checkout. Test watchers are removed afterwards.
+
+PostgreSQL tests verify the global checkout lock, rollback of a competing
+watcher update, concurrent submission claims, expired-code rejection, automatic
+deferral at twelve minutes, and startup recovery of an unknown payment. The
+browser suite verifies the built dashboard through HTTP handlers to PostgreSQL;
+the payment provider remains a local fixture and no test code reaches a bank.

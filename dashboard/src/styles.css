@@ -232,6 +232,10 @@ main {
 .purchase-panel dd { margin: 0; overflow-wrap: anywhere; }
 .purchase-panel form { display: grid; gap: 10px; }
 .purchase-panel a { color: #1e6f5c; }
+.purchase-summary-preview { margin: 16px 0; }
+.purchase-summary-preview summary { cursor: pointer; font-weight: 600; }
+.purchase-summary-preview a { display: inline-block; margin: 12px 0; }
+.purchase-summary-preview img { display: block; width: 100%; height: auto; border: 1px solid #cbd5e1; border-radius: 8px; }
 .purchase-timer { font-size: 1.2rem; font-variant-numeric: tabular-nums; font-weight: 700; }
 
 @media (max-width: 1100px) {
