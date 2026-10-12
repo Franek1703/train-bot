@@ -34,6 +34,17 @@ beforeEach(() => {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
 describe('purchase emails', () => {
+  it('links a deferred payment to the retained bot page with the actual deadline', async () => {
+    const deferred = { ...session, state: 'WAITING_AFTER_DEFERRAL' as const };
+    mocks.find.mockResolvedValue({ ...deferred, watch });
+    await sendPurchaseNotification(deferred);
+    expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({
+      subject: expect.stringContaining('Płatność odroczona'),
+      text: expect.stringContaining('Strona bota: https://dashboard.example/?watch=watch-1&view=intercity'),
+    }), { idempotencyKey: 'purchase/purchase-1/WAITING_AFTER_DEFERRAL' });
+    expect(mocks.send.mock.calls[0][0].text).toContain('2026-10-09 14:12:44 Europe/Warsaw');
+  });
+
   it('sends a dashboard deep link, passenger, price and exact deadline to the watcher target', async () => {
     await sendPurchaseNotification(session);
     expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({

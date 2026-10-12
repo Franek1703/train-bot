@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { apiGet, apiSend, artifactUrl, type PurchaseSession, type Watch } from './api';
+import { apiGet, apiSend, artifactUrl, newAttemptId, type PurchaseSession, type Watch } from './api';
 
 const labels: Record<PurchaseSession['state'], string> = {
   PREPARING: 'Przygotowujemy płatność',
   WAITING_FOR_BLIK: 'Miejsce czeka — podaj kod BLIK',
+  WAITING_AFTER_DEFERRAL: 'Zamówienie oczekuje na płatność — strona bota jest otwarta',
   PAYMENT_PENDING: 'Potwierdź płatność w aplikacji bankowej. Czekamy na wynik Intercity.',
   PAID: 'Zakup potwierdzony',
   DEFERRED: 'Intercity potwierdziło „Zapłać później”',
@@ -53,7 +54,8 @@ export function PurchasePanel({ watch, onAccountState }: {
 
   const serverNow = clock.server + now - clock.client;
   const seconds = purchase ? Math.max(0, Math.ceil((Date.parse(purchase.acceptCodeUntil) - serverNow) / 1_000)) : 0;
-  const canPay = connected && purchase?.state === 'WAITING_FOR_BLIK' && seconds > 0 && !sending;
+  const waiting = purchase?.state === 'WAITING_FOR_BLIK' || purchase?.state === 'WAITING_AFTER_DEFERRAL';
+  const canPay = connected && waiting && seconds > 0 && !sending;
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -63,7 +65,7 @@ export function PurchasePanel({ watch, onAccountState }: {
     setSending(true);
     setNotice('');
     try {
-      await apiSend(`/purchases/${purchase.id}/blik`, 'POST', { code: inputCode, attemptId: crypto.randomUUID() });
+      await apiSend(`/purchases/${purchase.id}/blik`, 'POST', { code: inputCode, attemptId: newAttemptId() });
       setNotice('Kod wysłany. Potwierdź płatność w aplikacji bankowej.');
       setPurchase({ ...purchase, state: 'PAYMENT_PENDING' });
     } catch (error) {
@@ -97,9 +99,9 @@ export function PurchasePanel({ watch, onAccountState }: {
             )}
           </details>
         ) : <p className="muted">Zrzut podsumowania zakupu jest jeszcze niedostępny.</p>}
-        {purchase.state === 'WAITING_FOR_BLIK' && <>
+        {waiting && <>
           <p className="purchase-timer">Czas na podanie kodu: {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}</p>
-          <p className="muted">Po tym czasie bot wybierze „Zapłać później”.</p>
+          <p className="muted">{purchase.deferredAt ? 'Termin wynika z rezerwacji Intercity. Zamówienie zostało już odroczone.' : 'Po tym czasie bot wybierze „Zapłać później”.'}</p>
           <form onSubmit={(event) => void submit(event)}>
             <label htmlFor="blik-code">Kod BLIK</label>
             <input id="blik-code" type="password" inputMode="numeric" autoComplete="off" maxLength={6} pattern="[0-9]{6}" value={code}
@@ -109,7 +111,8 @@ export function PurchasePanel({ watch, onAccountState }: {
         </>}
         {purchase.errorMessage && <p role="alert">{purchase.errorMessage}</p>}
         {purchase.state === 'DEFERRED' && <p>Odroczenie nie jest potwierdzeniem zakupu. Aktualny termin i stan sprawdź w Intercity.</p>}
-        {purchase.intercityUrl && <a href={purchase.intercityUrl} target="_blank" rel="noreferrer">Otwórz Intercity</a>}
+        {purchase.browserAvailable ? <a href={`/?watch=${watch.id}&view=intercity`} target="_blank" rel="noreferrer">Otwórz Intercity — stronę bota</a>
+          : <p className="muted">Sesja przeglądarki bota nie jest dostępna.</p>}
       </>}
       {!connected && <p role="status">Odświeżamy połączenie z backendem. Wysyłanie kodu jest wstrzymane.</p>}
       {notice && <p role="status">{notice}</p>}

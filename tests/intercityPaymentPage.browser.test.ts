@@ -21,9 +21,14 @@ const html = `<!doctype html><html lang="pl"><body>
     <input aria-label="Kod BLIK" placeholder="WPISZ KOD BLIK">
     <p>Do zapłaty<br>33,81 zł</p>
     <button id="pay" onclick="window.submissions=(window.submissions||0)+1;document.querySelector('#result').textContent='Potwierdź płatność w aplikacji bankowej'">ZAPŁAĆ</button>
-    <button onclick="document.querySelector('#result').textContent='Zamówienie oczekuje na płatność. Numer zamówienia: ORDER-1'">ZAPŁAĆ PÓŹNIEJ</button>
+    <button onclick="document.querySelector('#deferral').hidden=false">ZAPŁAĆ PÓŹNIEJ</button>
   </section>
   <p id="result"></p>
+  <section id="deferral" role="dialog" hidden>
+    <h2>Zapłać później</h2><p>Potwierdzenie płatności musi nastąpić w ciągu 15 minut od dokonania rezerwacji.</p>
+    <button onclick="window.deferralConfirmed=true;document.querySelector('#deferral').hidden=true;document.querySelector('#result').textContent='Zamówienie oczekuje na płatność. Numer zamówienia: ORDER-1'">PRZEJDŹ DO OCZEKUJĄCYCH NA PŁATNOŚĆ</button>
+    <button>ANULUJ</button>
+  </section>
 </body></html>`;
 
 let server: Server;
@@ -129,11 +134,21 @@ describe('Intercity payment UI adapter', () => {
     const payment = adapter();
     await payment.prepare();
     expect(await payment.defer()).toMatchObject({ confirmed: true, orderNumber: 'ORDER-1' });
+    expect(await page.evaluate(() => (window as unknown as { deferralConfirmed: boolean }).deferralConfirmed)).toBe(true);
     await page.goto(url);
     const pending = adapter();
     await pending.prepare();
     await pending.submit('123456');
     expect(await pending.defer()).toEqual({ confirmed: false });
+  });
+
+  it('does not confirm deferral merely because the modal closes and a pending heading appears', async () => {
+    const payment = adapter();
+    await payment.prepare();
+    await page.getByRole('button', { name: 'PRZEJDŹ DO OCZEKUJĄCYCH NA PŁATNOŚĆ', includeHidden: true }).evaluate((node) => {
+      node.setAttribute('onclick', "document.querySelector('#deferral').hidden=true;document.querySelector('#result').innerHTML='<h2>Oczekujące na płatność</h2><p>Brak zamówień</p>'");
+    });
+    expect((await payment.defer()).confirmed).toBe(false);
   });
 
   it('refuses a ticket without a guaranteed seat', async () => {

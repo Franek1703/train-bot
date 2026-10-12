@@ -12,7 +12,7 @@ export const purchaseRepository: PurchaseRepository = {
   update: (id, data) => prisma.purchaseSession.update({ where: { id }, data }),
   async claimAttempt(id, attemptId, now) {
     const result = await prisma.purchaseSession.updateMany({
-      where: { id, state: 'WAITING_FOR_BLIK', acceptCodeUntil: { gt: now } },
+      where: { id, state: { in: ['WAITING_FOR_BLIK', 'WAITING_AFTER_DEFERRAL'] }, acceptCodeUntil: { gt: now } },
       data: { state: 'PAYMENT_PENDING', attemptId, errorMessage: null },
     });
     return result.count === 1;

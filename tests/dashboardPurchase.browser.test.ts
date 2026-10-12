@@ -30,6 +30,7 @@ vi.mock('../src/config/env.js', () => ({ env: {
 vi.mock('../src/purchases/index.js', () => ({ purchaseManager: {
   get busy() { return fixture.manager?.busy ?? false; },
   submit: (id: string, code: string, attemptId: string) => fixture.manager!.submit(id, code, attemptId),
+  browserAvailable: (id: string) => fixture.manager!.browserAvailable(id),
 } }));
 vi.mock('../src/purchases/purchaseRepository.js', async (importOriginal) => process.env.TEST_DATABASE_URL
   ? await importOriginal() : ({

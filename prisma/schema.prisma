@@ -82,6 +82,7 @@ model PurchaseSession {
   intercityUrl        String?            @map("intercity_url")
   errorMessage        String?            @map("error_message")
   reviewedAt          DateTime?          @map("reviewed_at")
+  deferredAt          DateTime?          @map("deferred_at")
   createdAt           DateTime           @default(now()) @map("created_at")
   updatedAt           DateTime           @updatedAt @map("updated_at")
   watch               Watch              @relation(fields: [watchId], references: [id], onDelete: Cascade)

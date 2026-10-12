@@ -37,14 +37,22 @@ If the artifact is not ready yet or cannot load, payment remains available.
 ## Deadlines and failure handling
 
 The first reservation timer is read in the summary before seat polling and
-screenshots. `expiresAt` can only shorten. `acceptCodeUntil` is the earlier of
+screenshots. Until confirmed deferral, `expiresAt` can only shorten. `acceptCodeUntil` is the earlier of
 12 minutes from reservation start and three minutes before the actual expiry.
 Preparing checkout and delivering email use that same time budget.
 
-At the code deadline, an idle checkout clicks **ZAPŁAĆ PÓŹNIEJ**. `DEFERRED`
-requires explicit site confirmation; it is not a paid ticket and does not
-guarantee more reservation time. Missing clocks never grant a new 15-minute
-window: preparation attempts immediate deferral instead of waiting.
+At the code deadline, an idle checkout clicks **ZAPŁAĆ PÓŹNIEJ**, then confirms
+the modal using **PRZEJDŹ DO OCZEKUJĄCYCH NA PŁATNOŚĆ**. Only a saved-order
+confirmation or an identifiable pending order enters `WAITING_AFTER_DEFERRAL`.
+The browser and account gate remain held. The dashboard can reopen that order
+and submit BLIK with the same booking and amount checks as the initial checkout.
+
+Deferral occurs at most once (`deferredAt`). It is not a paid ticket and does not
+guarantee another 15 minutes. A later expiry is accepted only from the identified
+pending order's displayed timer at the deferral transition; otherwise the original
+expiry remains. The deferred code deadline is 30 seconds before that expiry.
+Subsequent observations and reopening can only shorten it. Missing initial clocks
+never grant a new 15-minute window: preparation attempts immediate deferral and closes.
 
 A submitted payment is not deferred or retried automatically. A timeout during
 submission may still mean the payment reached the provider. The manager observes
@@ -53,8 +61,8 @@ BLIK field and before `acceptCodeUntil`. If no result is confirmed by two minute
 after expiry, the session becomes `UNKNOWN`. Expired reservations with a pending
 payment also become `UNKNOWN`, requiring order inspection.
 
-On controlled shutdown, waiting sessions attempt deferral; pending payments become
-`UNKNOWN`. Startup marks all formerly active sessions `UNKNOWN` and keeps their
+On controlled shutdown, initial waiting sessions attempt deferral and close;
+retained deferred sessions and pending payments become `UNKNOWN`. Startup marks all formerly active sessions `UNKNOWN` and keeps their
 watchers stopped. The dashboard requires confirmation that the user inspected
 the Intercity order before resuming an unknown purchase. `reviewedAt` records
 that acknowledgement without rewriting the historical result.
@@ -68,7 +76,9 @@ PREPARING → WAITING_FOR_BLIK → PAYMENT_PENDING → PAID
                  ↑                  |
                  └── explicit rejection
 
-WAITING_FOR_BLIK → DEFERRED / EXPIRED / FAILED
+WAITING_FOR_BLIK → WAITING_AFTER_DEFERRAL → WAITING_FOR_BLIK → PAYMENT_PENDING
+Active deferred checkout → EXPIRED / UNKNOWN
+Controlled shutdown or failed preparation → DEFERRED / FAILED
 Active session lost or pending result unresolved → UNKNOWN
 ```
 
@@ -81,9 +91,32 @@ purchase records. The runtime supports one backend process per configured accoun
 The browser remains server-side; opening or closing the dashboard has no effect
 on it. BLIK codes exist only transiently in the request and browser input. They
 are not stored in session records, logs, screenshots or diagnostic artifacts.
-No payment-page screenshots or raw browser submission errors are captured.
-Stored Intercity links omit query parameters; they open Intercity in the user's
-own browser and do not transfer the server-side browser session.
+No payment-page screenshots or raw browser submission errors are saved to artifacts.
+The live remote view streams viewport images in memory with text inputs masked.
+Typed values and control tokens are not stored in logs, artifacts or browser storage.
+Stored Intercity links omit query parameters and are retained only as metadata.
+
+## Remote page on the local network
+
+**Otwórz Intercity — stronę bota** opens `?watch=<id>&view=intercity` in the
+dashboard. It displays the existing Playwright page, never a separate Intercity
+login or an iframe. The image refreshes once per second while visible. Controls
+support clicks, text fields, selections, scrolling, keyboard navigation and mobile
+zoom. Frames include server-owned element references; moved, consumed or expired
+frames are rejected. Other viewers do not invalidate the controller's frame.
+
+One device controls the page with a 30-second bearer lease, renewed every ten
+seconds while visible. Another device may explicitly take over. Closing the view
+releases control but does not close checkout. Actions, images and the timer share
+the purchase manager's operation gate. Native pay clicks and Enter go through the
+same BLIK claim/validation path as the dashboard form. Payment pending permits
+viewing only. Bank confirmation still happens in the user's banking app.
+
+After expiry, confirmed purchase or browser loss the page is unavailable. It
+cannot be reconstructed by opening the original Intercity URL. This version is
+for a trusted local network; Internet publication and remote desktop recovery
+across backend restarts are outside its scope. Use a LAN address in `DASHBOARD_URL`
+for email links opened on a phone. Other devices use that same host on port 5173.
 
 ## API
 
@@ -101,7 +134,8 @@ Watcher creation/update accepts `purchaseMode: "notify" | "blik"` and
 ```
 
 For an existing session, `purchase` contains its state, passenger, seat, price,
-`expiresAt`, `acceptCodeUntil`, error, and available order reference/Intercity link.
+`expiresAt`, `acceptCodeUntil`, `deferredAt`, `browserAvailable`, summary artifact,
+error, and available order reference/Intercity metadata link.
 Responses use `Cache-Control: no-store`. The dashboard polls every two seconds
 and calculates its countdown from server time rather than the user's wall clock.
 
@@ -116,6 +150,16 @@ payment confirmation. Repeating the same attempt never submits again. Malformed
 codes/UUIDs return 400; expired, busy or unavailable sessions return 409. Browser
 requests from origins outside the configured dashboard origin are rejected.
 The existing API remains private and is not a public multi-user service.
+
+Remote APIs under `/purchases/:id/browser`: `GET frame`, `POST control` (optional
+`takeover`), `PATCH control` heartbeat, `DELETE control`, and `POST action`.
+Control operations return a bearer token; action/heartbeat/release send it in
+`Authorization`. Actions include `frameId`, a UUID `attemptId`, and a validated
+click/fill/select/scroll/key action. Frames, inputs and tokens use `no-store`.
+Foreign browser origins are rejected; configured dashboard origins and the same
+LAN hostname with the configured dashboard port are accepted. A lost page returns
+410; busy, stale or unowned actions return 409. `POST /purchases/:id/resume-payment`
+reopens only the existing identified deferred order.
 
 `POST /watches/:id/resume` accepts `{ "acknowledgeUnknown": true }` after manual
 inspection of an unknown order. Normal resume does not require a body.
@@ -166,3 +210,6 @@ watcher update, concurrent submission claims, expired-code rejection, automatic
 deferral at twelve minutes, and startup recovery of an unknown payment. The
 browser suite verifies the built dashboard through HTTP handlers to PostgreSQL;
 the payment provider remains a local fixture and no test code reaches a bank.
+The remote suite verifies phone/desktop takeover, stale frames, the deferral modal,
+retained page, matching deferred order, native BLIK submission and completion.
+PostgreSQL browser files run sequentially to respect the global checkout index.

@@ -5,14 +5,16 @@ import type { PurchaseRecord, PurchaseState } from './types.js';
 
 const outcomeLabels: Record<PurchaseState, string> = {
   PREPARING: 'Przygotowanie płatności', WAITING_FOR_BLIK: 'Miejsce czeka na kod BLIK',
+  WAITING_AFTER_DEFERRAL: 'Zamówienie oczekuje na płatność — strona bota jest dostępna',
   PAYMENT_PENDING: 'Oczekiwanie na wynik płatności', PAID: 'Zakup potwierdzony',
   DEFERRED: 'Płatność odroczona', EXPIRED: 'Rezerwacja wygasła',
   FAILED: 'Operacja nie powiodła się', UNKNOWN: 'Sprawdź zamówienie na koncie Intercity',
 };
 
-export function purchaseDashboardUrl(watchId: string): string {
+export function purchaseDashboardUrl(watchId: string, remote = false): string {
   const url = new URL(env.DASHBOARD_URL);
   url.searchParams.set('watch', watchId);
+  if (remote) url.searchParams.set('view', 'intercity');
   return url.toString();
 }
 
@@ -30,14 +32,15 @@ export async function sendPurchaseNotification(session: PurchaseRecord, retry = 
     const eventKey = `purchase/${session.id}/${session.state}`;
     if (await prisma.notification.findFirst({ where: { eventKey, status: 'sent' } })) return;
     const target = current.watch.notificationTarget ?? env.EMAIL_TO;
-    const waiting = session.state === 'WAITING_FOR_BLIK';
+    const waiting = session.state === 'WAITING_FOR_BLIK' || session.state === 'WAITING_AFTER_DEFERRAL';
+    const deferred = session.state === 'WAITING_AFTER_DEFERRAL';
     const label = outcomeLabels[session.state as PurchaseState] ?? 'Sprawdź wynik zamówienia';
     const deadline = new Intl.DateTimeFormat('sv-SE', {
       timeZone: env.TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
     }).format(current.acceptCodeUntil);
     const text = [
-      waiting ? 'Miejsce zarezerwowane — podaj kod BLIK w dashboardzie.' : label,
+      deferred ? label : waiting ? 'Miejsce zarezerwowane — podaj kod BLIK w dashboardzie.' : label,
       `${current.watch.trainNumber ?? ''}: ${current.watch.origin} → ${current.watch.destination}`,
       `Podróż: ${current.watch.travelDate.toISOString().slice(0, 10)} ${current.watch.departureTime ?? ''}`,
       `Podróżny: ${current.passengerName ?? '—'}`,
@@ -47,13 +50,13 @@ export async function sendPurchaseNotification(session: PurchaseRecord, retry = 
       ...(current.errorMessage ? [current.errorMessage] : []),
       ...(current.orderNumber ? [`Zamówienie: ${current.orderNumber}`] : []),
       purchaseDashboardUrl(current.watchId),
-      ...(!waiting && current.intercityUrl ? [`Intercity: ${current.intercityUrl}`] : []),
+      ...(waiting ? [`Strona bota: ${purchaseDashboardUrl(current.watchId, true)}`] : []),
     ].join('\n');
     audit = { watchId: session.watchId, availabilityCheckId: current.availabilityCheckId, channel: 'email', target, message: text, eventKey };
     if (!env.RESEND_API_KEY || !env.EMAIL_FROM || !target) throw new Error('Brak konfiguracji maila');
     const result = await new Resend(env.RESEND_API_KEY).emails.send({
       from: env.EMAIL_FROM, to: target,
-      subject: `${waiting ? 'BLIK — miejsce czeka' : label} · ${current.watch.trainNumber ?? 'Intercity'}`,
+      subject: `${deferred ? 'Płatność odroczona — strona bota jest dostępna' : waiting ? 'BLIK — miejsce czeka' : label} · ${current.watch.trainNumber ?? 'Intercity'}`,
       text,
     }, { idempotencyKey: eventKey });
     await prisma.notification.create({ data: {

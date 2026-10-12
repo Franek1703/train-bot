@@ -133,7 +133,7 @@ Dashboard refreshes or closure do not close the bot's browser session.
 The code deadline is **12 minutes from the reservation start**, or earlier if
 Intercity's timer allows less time; the bot reserves three minutes for deferral.
 Preparation and email delivery consume this time. At the deadline, the bot
-clicks **Zapłać później** if payment has not started. It reports deferral only
+clicks **Zapłać później** and confirms **Przejdź do oczekujących na płatność** if payment has not started. It reports deferral only
 when Intercity confirms it; deferral does not itself mean purchase or guarantee
 an extended reservation. During a submitted payment it waits for the result.
 An explicitly rejected code can be replaced before the deadline.
@@ -157,6 +157,12 @@ npm run test:browser
 ```
 
 See [BLIK checkout documentation](docs/blik_purchase.md) for API and state details.
+
+**Otwórz Intercity — stronę bota** opens a live view of the browser retained by
+the bot. On a trusted local network you can click, type, scroll and take control
+from another phone/browser. The browser stays open after confirmed deferral;
+use its actual Intercity deadline, which does not guarantee another 15 minutes.
+Set `DASHBOARD_URL` to the bot host's LAN address for links usable on a phone.
 
 ## API
 

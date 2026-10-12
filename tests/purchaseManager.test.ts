@@ -87,7 +87,11 @@ describe('BLIK purchase lifecycle', () => {
     await expect(h.manager.submit('purchase-1', '123456', 'late')).rejects.toThrow('termin');
     await h.manager.tick();
     expect(h.page.defer).toHaveBeenCalledOnce();
-    expect(h.record().state).toBe('DEFERRED');
+    expect(h.record().state).toBe('WAITING_AFTER_DEFERRAL');
+    expect(h.record().expiresAt).toEqual(expiresAt);
+    expect(h.record().acceptCodeUntil).toEqual(new Date(expiresAt.getTime() - 30_000));
+    expect(h.manager.busy).toBe(true);
+    expect(h.page.close).not.toHaveBeenCalled();
     expect(h.page.submit).not.toHaveBeenCalled();
   });
 
@@ -100,6 +104,72 @@ describe('BLIK purchase lifecycle', () => {
     h.page.observe.mockResolvedValue({ outcome: 'pending', expiresAt: new Date(start.getTime() + 30 * 60_000) });
     await h.manager.tick();
     expect(h.record().acceptCodeUntil).toEqual(new Date(start.getTime() + 2 * 60_000));
+  });
+
+  it('expires controller leases, supports takeover and rejects the previous device', async () => {
+    const h = harness();
+    const remote = { frame: vi.fn(async () => ({ id: 'frame', image: '', width: 1, height: 1, targets: [] })), action: vi.fn(async () => {}), invalidate: vi.fn() };
+    await h.manager.prepare('watch-1', 'seat', expiresAt, { ...h.page, remote });
+    const first = h.manager.acquireControl('purchase-1');
+    expect(() => h.manager.acquireControl('purchase-1')).toThrow('Inne urządzenie');
+    const second = h.manager.acquireControl('purchase-1', true);
+    expect(() => h.manager.renewControl('purchase-1', first.token)).toThrow('przejęte');
+    expect((await h.manager.remoteFrame('purchase-1', second.token)).ownsControl).toBe(true);
+    vi.setSystemTime(new Date(start.getTime() + 31_000));
+    expect(() => h.manager.renewControl('purchase-1', second.token)).toThrow('wygasło');
+    await expect(h.manager.remoteAction('purchase-1', second.token, { kind: 'scroll', frameId: 'frame', deltaY: 100 }, 'action')).rejects.toThrow('wygasło');
+    expect(remote.action).not.toHaveBeenCalled();
+  });
+
+  it('waits for another device frame before acting and rechecks control after waiting', async () => {
+    const h = harness();
+    let release!: () => void;
+    const frame = { id: 'frame', image: '', width: 1, height: 1, targets: [] };
+    const remote = { frame: vi.fn(() => new Promise<typeof frame>((resolve) => { release = () => resolve(frame); })), action: vi.fn(async () => {}), invalidate: vi.fn() };
+    await h.manager.prepare('watch-1', 'seat', expiresAt, { ...h.page, remote });
+    const first = h.manager.acquireControl('purchase-1');
+    const polling = h.manager.remoteFrame('purchase-1');
+    await vi.waitFor(() => expect(remote.frame).toHaveBeenCalledOnce());
+    const action = { kind: 'scroll' as const, frameId: 'frame', deltaY: 100 };
+    const clicking = h.manager.remoteAction('purchase-1', first.token, action, 'action-1');
+    expect(remote.action).not.toHaveBeenCalled();
+    release();
+    await Promise.all([polling, clicking]);
+    expect(remote.action).toHaveBeenCalledOnce();
+
+    const pollingAgain = h.manager.remoteFrame('purchase-1');
+    await vi.waitFor(() => expect(remote.frame).toHaveBeenCalledTimes(2));
+    const rejected = expect(h.manager.remoteAction('purchase-1', first.token, action, 'action-2')).rejects.toThrow('przejęte');
+    h.manager.acquireControl('purchase-1', true);
+    release();
+    await Promise.all([pollingAgain, rejected]);
+    expect(remote.action).toHaveBeenCalledOnce();
+  });
+
+  it('routes remote native payment through the same claim and does not repeat an action', async () => {
+    const h = harness();
+    const remote = { frame: vi.fn(), invalidate: vi.fn(), action: vi.fn<NonNullable<PurchasePage['remote']>['action']>(async (_action, intercept) => intercept('submit')) };
+    await h.manager.prepare('watch-1', 'seat', expiresAt, { ...h.page, remote, readCode: async () => '123456' });
+    const control = h.manager.acquireControl('purchase-1');
+    const action = { kind: 'click' as const, frameId: 'frame', targetId: 'pay' };
+    await h.manager.remoteAction('purchase-1', control.token, action, 'attempt-1');
+    await h.manager.remoteAction('purchase-1', control.token, action, 'attempt-1');
+    expect(h.record().state).toBe('PAYMENT_PENDING');
+    expect(h.page.submit).toHaveBeenCalledOnce();
+    expect(h.repository.claimAttempt).toHaveBeenCalledOnce();
+    await expect(h.manager.remoteAction('purchase-1', control.token, action, 'attempt-2')).rejects.toThrow('podgląd');
+  });
+
+  it('never performs a remote click across the automatic deferral deadline', async () => {
+    const h = harness();
+    const remote = { frame: vi.fn(), action: vi.fn(), invalidate: vi.fn() };
+    await h.manager.prepare('watch-1', 'seat', expiresAt, { ...h.page, remote });
+    vi.setSystemTime(new Date(start.getTime() + 12 * 60_000));
+    const control = h.manager.acquireControl('purchase-1');
+    await expect(h.manager.remoteAction('purchase-1', control.token, { kind: 'scroll', frameId: 'frame', deltaY: 100 }, 'action')).rejects.toThrow('Termin');
+    expect(h.record().state).toBe('WAITING_AFTER_DEFERRAL');
+    expect(remote.action).not.toHaveBeenCalled();
+    expect(h.page.defer).toHaveBeenCalledOnce();
   });
 
   it('does not extend an unreadable reservation clock; it immediately attempts deferral', async () => {
@@ -175,9 +245,40 @@ describe('BLIK purchase lifecycle', () => {
     await h.manager.prepare('watch-1', 'seat', expiresAt, h.page);
     h.page.submit.mockRejectedValue(new PaymentNotSubmittedError('Changed amount'));
     await h.manager.submit('purchase-1', '123456', 'attempt-1');
-    expect(h.record().state).toBe('DEFERRED');
+    expect(h.record().state).toBe('WAITING_AFTER_DEFERRAL');
     expect(h.page.defer).toHaveBeenCalledOnce();
+    expect(h.page.close).not.toHaveBeenCalled();
+  });
+
+  it('accepts a later expiry only when confirmed during deferral and never defers twice', async () => {
+    const h = harness();
+    await h.manager.prepare('watch-1', 'seat', expiresAt, h.page);
+    const later = new Date(start.getTime() + 27 * 60_000);
+    h.page.defer.mockResolvedValue({ confirmed: true, expiresAt: later });
+    vi.setSystemTime(new Date(start.getTime() + 12 * 60_000));
+    await h.manager.tick();
+    expect(h.record()).toMatchObject({ state: 'WAITING_AFTER_DEFERRAL', expiresAt: later });
+    vi.setSystemTime(new Date(start.getTime() + 13 * 60_000));
+    await h.manager.tick();
+    expect(h.page.defer).toHaveBeenCalledOnce();
+    vi.setSystemTime(later);
+    await h.manager.tick();
+    expect(h.record().state).toBe('EXPIRED');
     expect(h.page.close).toHaveBeenCalledOnce();
+  });
+
+  it('reopens the existing deferred order before submitting and uses its remaining deadline', async () => {
+    const h = harness();
+    const page = { ...h.page, resumeDeferred: vi.fn(async () => ({ expiresAt })) };
+    await h.manager.prepare('watch-1', 'seat', expiresAt, page);
+    vi.setSystemTime(new Date(start.getTime() + 12 * 60_000));
+    await h.manager.tick();
+    await h.manager.submit('purchase-1', '123456', 'deferred-attempt');
+    expect(page.resumeDeferred).toHaveBeenCalledWith('ORDER-1');
+    expect(h.record().state).toBe('PAYMENT_PENDING');
+    expect(h.page.submit).toHaveBeenCalledOnce();
+    await h.manager.tick();
+    expect(h.page.defer).toHaveBeenCalledOnce();
   });
 
   it('excludes submission errors containing a BLIK code from saved records and notifications', async () => {

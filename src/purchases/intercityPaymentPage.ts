@@ -2,6 +2,7 @@ import type { Browser, Locator, Page } from 'playwright';
 import { extractSeatAssignment } from '../checker/parser.js';
 import type { PaymentObservation, PurchasePage } from './types.js';
 import { PaymentNotSubmittedError, PurchasePreparationError } from './types.js';
+import { IntercityRemotePage } from './remotePage.js';
 
 interface BookingExpectation {
   trainNumber: string | null; departureTime: string | null; travelClass: number; passengers: number;
@@ -43,9 +44,11 @@ export class IntercityPaymentPage implements PurchasePage {
   private readonly passenger: Locator;
   private readonly code: Locator;
   private prepared?: { passengerName: string; price: string };
+  readonly remote: IntercityRemotePage;
 
   constructor(private readonly page: Page, private readonly browser: Browser, private readonly seatAssignment: string, private readonly expected?: BookingExpectation) {
     page.setDefaultTimeout(5_000);
+    this.remote = new IntercityRemotePage(page);
     this.passenger = page.getByRole('textbox', { name: /imię i nazwisko/i })
       .or(page.getByLabel(/imię i nazwisko/i)).first();
     this.code = page.getByRole('textbox', { name: /kod blik/i })
@@ -95,6 +98,10 @@ export class IntercityPaymentPage implements PurchasePage {
       .and(this.page.locator('button:not([disabled]):not([aria-disabled="true"])'));
     await pay.waitFor({ state: 'visible', timeout: 20_000 });
     await pay.click();
+    return this.preparePaymentForm(summaryPassenger);
+  }
+
+  private async preparePaymentForm(summaryPassenger?: string) {
     await this.passenger.waitFor({ state: 'visible', timeout: 20_000 });
     const paymentName = (await this.passenger.inputValue()).trim();
     if (!paymentName || /nazwisko podróżnego pokrywa się|zmień dane podróżnego/i.test(await this.body())) {
@@ -117,6 +124,9 @@ export class IntercityPaymentPage implements PurchasePage {
     const price = this.priceFromText(text);
     if (!price || Number(price.replace(',', '.')) <= 0) throw new PurchasePreparationError('Brak kwoty płatności BLIK.');
     await this.code.waitFor({ state: 'visible' });
+    if (this.prepared && (this.prepared.passengerName !== passengerName || this.prepared.price !== price)) {
+      throw new PurchasePreparationError('Dane zamówienia zmieniły się po odroczeniu płatności.');
+    }
     this.prepared = { passengerName, price };
     return { passengerName, price: `${price} zł`, intercityUrl: pageLink(this.page), expiresAt: await readReservationExpiry(this.page) };
   }
@@ -140,6 +150,8 @@ export class IntercityPaymentPage implements PurchasePage {
     try {
       const text = await this.body();
       this.verifyBooking(text);
+      const method = this.page.getByLabel(/^BLIK$/i).and(this.page.locator('input[type="radio"]')).first();
+      if (!await method.isChecked()) throw new Error('Changed payment method');
       if (!this.prepared || this.priceFromText(text) !== this.prepared.price
         || (await this.passenger.inputValue()).trim() !== this.prepared.passengerName) {
         throw new Error('Changed payment details');
@@ -175,18 +187,86 @@ export class IntercityPaymentPage implements PurchasePage {
     return { outcome: 'pending', expiresAt };
   }
 
+  async readCode(): Promise<string> { return this.code.inputValue(); }
+
+  private matchesDeferredOrder(text: string, orderNumber?: string | null): boolean {
+    if (orderNumber) return text.includes(orderNumber);
+    if (!this.expected?.trainNumber || !this.expected.departureTime) return false;
+    const digits = this.expected.trainNumber.replace(/\D/g, '');
+    const date = this.expected.travelDate;
+    const dates = date ? [
+      `${date.getUTCDate()} ${months[date.getUTCMonth()]}`,
+      date.toISOString().slice(0, 10),
+      `${String(date.getUTCDate()).padStart(2, '0')}.${String(date.getUTCMonth() + 1).padStart(2, '0')}.${date.getUTCFullYear()}`,
+    ] : [];
+    return new RegExp(`\\b${digits}\\b`).test(text) && text.includes(this.expected.departureTime)
+      && (!date || dates.some((value) => text.toLocaleLowerCase('pl-PL').includes(value)))
+      && (!this.expected.origin || stationText(text).includes(stationText(this.expected.origin)))
+      && (!this.expected.destination || stationText(text).includes(stationText(this.expected.destination)));
+  }
+
+  private async deferredOrder(orderNumber?: string | null): Promise<{ container: Locator; button: Locator } | undefined> {
+    const buttons = this.page.getByRole('button', { name: /^zapłać(?:\s+teraz)?$/i })
+      .or(this.page.getByRole('link', { name: /^zapłać(?:\s+teraz)?$/i }));
+    const matches: Array<{ container: Locator; button: Locator }> = [];
+    for (let i = 0; i < await buttons.count(); i++) {
+      const button = buttons.nth(i);
+      if (!await button.isVisible()) continue;
+      let container = button;
+      for (let depth = 0; depth < 12; depth++) {
+        container = container.locator('xpath=..');
+        const text = await container.innerText().catch(() => '');
+        if (this.matchesDeferredOrder(text, orderNumber)) {
+          if (await container.getByLabel(/kod blik/i).or(container.getByPlaceholder(/wpisz kod blik/i)).filter({ visible: true }).count()) break;
+          // A page containing multiple orders is not an identifiable order card.
+          const payButtons = container.getByRole('button', { name: /^zapłać(?:\s+teraz)?$/i })
+            .or(container.getByRole('link', { name: /^zapłać(?:\s+teraz)?$/i }));
+          if (await payButtons.count() === 1) matches.push({ container, button });
+          break;
+        }
+      }
+    }
+    if (matches.length > 1) throw new PurchasePreparationError('Nie można jednoznacznie wskazać odroczonego zamówienia.');
+    return matches[0];
+  }
+
+  async resumeDeferred(orderNumber: string | null): Promise<{ expiresAt?: Date }> {
+    this.remote.invalidate();
+    if (await this.passenger.isVisible().catch(() => false)) {
+      return { expiresAt: (await this.preparePaymentForm()).expiresAt };
+    }
+    const order = await this.deferredOrder(orderNumber);
+    if (!order) throw new PurchasePreparationError('Nie znaleziono właściwego zamówienia oczekującego na płatność.');
+    await order.button.click();
+    await this.passenger.or(this.page.getByRole('button', { name: /^płatność$/i })
+      .and(this.page.locator('button:not([disabled]):not([aria-disabled="true"])'))).filter({ visible: true }).first().waitFor({ state: 'visible', timeout: 15_000 });
+    const details = await this.passenger.isVisible().catch(() => false) ? await this.preparePaymentForm() : await this.prepare();
+    return { expiresAt: details.expiresAt };
+  }
+
   async defer() {
     if (this.submitted) return { confirmed: false };
-    const button = this.page.getByRole('button', { name: /^zapłać później$/i });
-    if (!await button.isVisible().catch(() => false) || !await button.isEnabled()) return { confirmed: false };
-    await button.click();
+    this.remote.invalidate();
+    const proceed = this.page.getByRole('button', { name: /^przejdź do oczekujących na płatność$/i });
+    if (!await proceed.isVisible().catch(() => false)) {
+      const button = this.page.getByRole('button', { name: /^zapłać później$/i });
+      if (!await button.isVisible().catch(() => false) || !await button.isEnabled()) return { confirmed: false };
+      await button.click();
+    }
+    await proceed.waitFor({ state: 'visible', timeout: 15_000 });
+    await proceed.click();
+    await proceed.waitFor({ state: 'hidden', timeout: 15_000 });
     // Confirm using an explicit result; disappearing buttons alone prove nothing.
     const confirmation = this.page.getByText(/(?:zamówienie zostało zapisane|płatność została odroczona|zamówienie oczekuje na płatność|bilet oczekuje na (?:opłacenie|płatność))/i).first();
-    await confirmation.waitFor({ state: 'visible', timeout: 15_000 });
+    await confirmation.or(this.page.getByRole('heading', { name: /^oczekujące na płatność$/i })).first().waitFor({ state: 'visible', timeout: 15_000 });
+    const order = await this.deferredOrder();
+    if (!order && !await confirmation.isVisible()) return { confirmed: false };
+    const orderText = order ? await order.container.innerText() : '';
     const text = await this.body();
     return {
       confirmed: true, intercityUrl: pageLink(this.page),
-      orderNumber: text.match(/(?:numer zamówienia|nr zamówienia)\s*:?\s*([\w/-]+)/i)?.[1],
+      orderNumber: (orderText || text).match(/(?:numer zamówienia|nr zamówienia)\s*:?\s*([\w/-]+)/i)?.[1],
+      expiresAt: order ? expiryFromText(orderText) : undefined,
     };
   }
 

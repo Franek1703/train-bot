@@ -60,17 +60,19 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('BLIK with PostgreSQL transactio
       expect(session.acceptCodeUntil.getTime() - now.getTime()).toBe(12 * 60_000);
       now = new Date(session.acceptCodeUntil);
       await manager.tick();
-      expect(await purchaseRepository.get(session.id)).toMatchObject({ state: 'DEFERRED', orderNumber: 'TEST-DEFERRED' });
+      expect(await purchaseRepository.get(session.id)).toMatchObject({ state: 'WAITING_AFTER_DEFERRAL', orderNumber: 'TEST-DEFERRED', deferredAt: now });
       expect(page.defer).toHaveBeenCalledOnce(); expect(page.submit).not.toHaveBeenCalled();
-      expect(manager.busy).toBe(false);
+      expect(manager.busy).toBe(true);
+      const second = await watch();
+      await expect(purchaseRepository.create(second.id, 'seat', expiry(), deadline())).rejects.toMatchObject({ code: 'P2002' });
       expect((await prisma.watch.findUniqueOrThrow({ where: { id: row.id } })).active).toBe(false);
     } finally { await manager.shutdown(); }
   });
 
-  it('recovers a lost pending payment as UNKNOWN and releases the database checkout lock', async () => {
+  it.each(['PAYMENT_PENDING', 'WAITING_AFTER_DEFERRAL'])('recovers lost %s as UNKNOWN and releases the database checkout lock', async (state) => {
     const row = await watch();
     const session = await purchaseRepository.create(row.id, 'Wagon 9, miejsce 17', expiry(), deadline());
-    await purchaseRepository.update(session.id, { state: 'PAYMENT_PENDING' });
+    await purchaseRepository.update(session.id, { state: state as 'PAYMENT_PENDING' | 'WAITING_AFTER_DEFERRAL' });
     expect(await recoverLostPurchases()).toEqual([expect.objectContaining({ id: session.id, state: 'UNKNOWN' })]);
     expect(await purchaseRepository.get(session.id)).toMatchObject({ state: 'UNKNOWN' });
     expect((await prisma.watch.findUniqueOrThrow({ where: { id: row.id } })).active).toBe(false);

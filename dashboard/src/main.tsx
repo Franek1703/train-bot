@@ -12,6 +12,7 @@ import {
 } from './api';
 import './styles.css';
 import { PurchasePanel } from './PurchasePanel';
+import { RemotePurchaseView } from './RemoteBrowser';
 import type { PurchaseSession } from './api';
 
 type View = 'watches' | 'errors';
@@ -321,4 +322,6 @@ function normalizeForm(form: WatchInput): WatchInput {
   };
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+const locationParams = new URL(window.location.href).searchParams;
+const remoteWatch = locationParams.get('view') === 'intercity' ? locationParams.get('watch') : null;
+createRoot(document.getElementById('root')!).render(remoteWatch ? <RemotePurchaseView watchId={remoteWatch} /> : <App />);

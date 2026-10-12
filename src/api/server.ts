@@ -27,6 +27,26 @@ export const blikInputSchema = z.object({
   attemptId: z.string().uuid(),
 });
 
+const remoteActionSchema = z.intersection(z.object({ frameId: z.string().uuid(), attemptId: z.string().uuid() }), z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('click'), targetId: z.string().uuid() }),
+  z.object({ kind: z.literal('fill'), targetId: z.string().uuid(), text: z.string().max(2_000) }),
+  z.object({ kind: z.literal('select'), targetId: z.string().uuid(), value: z.string().max(200) }),
+  z.object({ kind: z.literal('scroll'), deltaY: z.number().min(-2_000).max(2_000) }),
+  z.object({ kind: z.literal('key'), key: z.enum(['Tab', 'Escape', 'Backspace', 'ArrowDown', 'ArrowUp', 'Enter']) }),
+]));
+
+function assertDashboardOrigin(request: IncomingMessage): void {
+  const origin = request.headers.origin;
+  if (!origin) return;
+  const configured = new URL(env.DASHBOARD_URL);
+  const source = new URL(origin);
+  const host = new URL(`http://${request.headers.host ?? 'localhost'}`);
+  const sameHostDashboard = source.hostname === host.hostname && source.port === configured.port && source.protocol === configured.protocol;
+  if (origin !== configured.origin && origin !== env.DASHBOARD_ORIGIN && !sameHostDashboard) {
+    throw new PurchaseError('Niedozwolone źródło żądania.', 403);
+  }
+}
+
 interface RouteContext {
   request: IncomingMessage;
   response: ServerResponse;
@@ -93,15 +113,42 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
 
   if (parts[0] === 'purchases' && parts.length === 3 && parts[2] === 'blik' && request.method === 'POST') {
     // Private dashboard only; reject cross-site browser payment requests.
-    const origin = request.headers.origin;
-    if (origin && origin !== new URL(env.DASHBOARD_URL).origin && origin !== env.DASHBOARD_ORIGIN) {
-      throw new PurchaseError('Niedozwolone źródło żądania płatności.', 403);
-    }
+    assertDashboardOrigin(request);
     const input = blikInputSchema.parse(await readJson(request));
     try { await purchaseManager.submit(parts[1], input.code, input.attemptId); }
     finally { input.code = ''; }
     sendJson(response, 202, { accepted: true });
     return;
+  }
+
+  if (parts[0] === 'purchases' && parts.length === 3 && parts[2] === 'resume-payment' && request.method === 'POST') {
+    assertDashboardOrigin(request);
+    await purchaseManager.resumeDeferred(parts[1]);
+    sendJson(response, 200, { ok: true });
+    return;
+  }
+
+  if (parts[0] === 'purchases' && parts.length === 4 && parts[2] === 'browser') {
+    assertDashboardOrigin(request);
+    const id = parts[1];
+    const token = request.headers.authorization?.replace(/^Bearer /, '');
+    if (parts[3] === 'frame' && request.method === 'GET') {
+      sendJson(response, 200, await purchaseManager.remoteFrame(id, token)); return;
+    }
+    if (parts[3] === 'control') {
+      if (request.method === 'POST') {
+        const input = z.object({ takeover: z.boolean().optional() }).parse(await readJson(request));
+        sendJson(response, 200, purchaseManager.acquireControl(id, input.takeover)); return;
+      }
+      if (request.method === 'PATCH') { sendJson(response, 200, purchaseManager.renewControl(id, token)); return; }
+      if (request.method === 'DELETE') { purchaseManager.releaseControl(id, token); sendJson(response, 200, { ok: true }); return; }
+    }
+    if (parts[3] === 'action' && request.method === 'POST') {
+      const action = remoteActionSchema.parse(await readJson(request));
+      try { await purchaseManager.remoteAction(id, token, action, action.attemptId); }
+      finally { if (action.kind === 'fill') action.text = ''; }
+      sendJson(response, 200, { ok: true }); return;
+    }
   }
 
   sendError(response, 404, 'Not found');
@@ -191,7 +238,7 @@ async function handleWatches(context: RouteContext): Promise<void> {
     const summaryScreenshotArtifactId = purchase
       ? await getPurchaseSummaryArtifactId(watchId, purchase.availabilityCheckId) : null;
     sendJson(response, 200, {
-      purchase: purchase ? { ...purchase, summaryScreenshotArtifactId } : null,
+      purchase: purchase ? { ...purchase, summaryScreenshotArtifactId, browserAvailable: purchaseManager.browserAvailable(purchase.id) } : null,
       serverTime: new Date().toISOString(), accountBusy: purchaseManager.busy,
     });
     return;
@@ -274,7 +321,7 @@ function sendError(response: ServerResponse, status: number, message: string): v
 function setCorsHeaders(response: ServerResponse): void {
   response.setHeader('Access-Control-Allow-Origin', env.DASHBOARD_ORIGIN);
   response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-  response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
 }
 
 process.on('uncaughtException', (error) => {
