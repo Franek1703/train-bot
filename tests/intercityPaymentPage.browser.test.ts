@@ -109,16 +109,68 @@ describe('Intercity payment UI adapter', () => {
     expect(details.expiresAt.getTime() - Date.now()).toBeGreaterThan(14 * 60_000);
   });
 
-  it('submits exactly once and waits for purchase evidence instead of trusting the click', async () => {
+  it.each(['PŁACĘ', 'PŁACĘ 33,81 zł', 'ZAPŁAĆ', 'ZAPŁAĆ 33,81 zł'])('waits for active %s, clicks once and waits for purchase evidence', async (label) => {
     const payment = adapter();
     await payment.prepare();
+    await page.locator('#pay').evaluate((raw, name) => {
+      const button = raw as HTMLButtonElement;
+      button.textContent = name; button.disabled = true;
+      document.querySelector('input[aria-label="Kod BLIK"]')!.addEventListener('input', () => {
+        setTimeout(() => { button.disabled = false; }, 100);
+      });
+    }, label);
     await payment.submit('012345');
     expect(await page.getByLabel('Kod BLIK').inputValue()).toBe('012345');
+    expect(await page.evaluate(() => (window as unknown as { submissions: number }).submissions)).toBe(1);
+    await expect(payment.submit('012345')).rejects.toThrow('już wysłana');
     expect(await page.evaluate(() => (window as unknown as { submissions: number }).submissions)).toBe(1);
     expect((await payment.observe()).outcome).toBe('pending');
     await page.locator('#result').evaluate((node) => { node.textContent = 'Płatność została zrealizowana. Numer zamówienia: ORDER-1'; });
     expect(await payment.observe()).toMatchObject({ outcome: 'paid', orderNumber: 'ORDER-1' });
   });
+
+  it('never clicks a disabled PŁACĘ or substitutes Zapłać później', async () => {
+    const payment = adapter();
+    await payment.prepare();
+    await page.locator('#pay').evaluate((raw) => { const button = raw as HTMLButtonElement; button.textContent = 'PŁACĘ'; button.disabled = true; });
+    await expect(payment.submit('012345')).rejects.toThrow('Kod nie został wysłany');
+    expect(await page.evaluate(() => (window as unknown as { submissions?: number }).submissions ?? 0)).toBe(0);
+    expect(await page.locator('#deferral').isVisible()).toBe(false);
+    expect((await payment.observe()).outcome).toBe('pending');
+  }, 10_000);
+
+  it.each(['click', 'Enter'] as const)('intercepts PŁACĘ through remote %s without bypassing submission validation', async (mode) => {
+    const payment = adapter(); await payment.prepare();
+    await page.locator('#pay').evaluate((button) => { button.textContent = 'PŁACĘ'; });
+    await page.locator('#pay').focus();
+    const frame = await payment.remote.frame();
+    const target = frame.targets.find((item) => item.label === 'PŁACĘ')!;
+    const intercept = vi.fn(async () => {});
+    await payment.remote.action(mode === 'click' ? { kind: 'click', frameId: frame.id, targetId: target.id }
+      : { kind: 'key', frameId: frame.id, key: 'Enter' }, intercept);
+    expect(intercept).toHaveBeenCalledOnce();
+    expect(intercept).toHaveBeenCalledWith('submit');
+    expect(await page.evaluate(() => (window as unknown as { submissions?: number }).submissions ?? 0)).toBe(0);
+  });
+
+  it('sanitizes an uncertain click and never automatically clicks again', async () => {
+    const payment = adapter(); await payment.prepare();
+    await page.locator('#pay').evaluate((button) => {
+      button.textContent = 'PŁACĘ';
+      // A visible, enabled button can still be blocked when Playwright dispatches.
+      button.style.pointerEvents = 'none';
+    });
+    const info = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(payment.submit('012345')).rejects.toThrow('Nie można potwierdzić wyniku kliknięcia');
+      await expect(payment.submit('012345')).rejects.toThrow('już wysłana');
+      const logs = JSON.stringify([...info.mock.calls, ...errors.mock.calls]);
+      expect(logs).toContain('click result is uncertain');
+      expect(logs).not.toContain('012345');
+      expect(await page.evaluate(() => (window as unknown as { submissions?: number }).submissions ?? 0)).toBe(0);
+    } finally { info.mockRestore(); errors.mockRestore(); }
+  }, 10_000);
 
   it('recognises a rejected code and clears it before another attempt', async () => {
     const payment = adapter();

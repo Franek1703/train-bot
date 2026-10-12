@@ -42,9 +42,9 @@ const html = `<!doctype html><html lang="pl"><body style="font-family:sans-serif
       <label>Imię i nazwisko <input aria-label="Imię i nazwisko" value="Test Passenger"></label>
       <label><input type="checkbox">Akceptuję Regulamin e-IC</label>
       <label><input type="radio" name="method">BLIK</label>
-      <input aria-label="Kod BLIK" placeholder="WPISZ KOD BLIK">
+      <input aria-label="Kod BLIK" placeholder="WPISZ KOD BLIK" oninput="document.querySelector('#pay').disabled=!/^\\d{6}$/.test(this.value)">
       <p>Do zapłaty<br>33,81 zł</p>
-      <button id="pay" onclick="window.submissions=(window.submissions||0)+1;document.querySelector('#result').textContent='Potwierdź płatność w aplikacji bankowej'">ZAPŁAĆ</button>
+      <button id="pay" disabled onclick="window.submissions=(window.submissions||0)+1;document.querySelector('#result').textContent='Potwierdź płatność w aplikacji bankowej'">PŁACĘ</button>
       <button onclick="document.querySelector('#dialog').hidden=false">ZAPŁAĆ PÓŹNIEJ</button>
     </section>
   </main><p id="result"></p>
@@ -145,7 +145,16 @@ describe('Remote browser and deferred checkout through real HTTP handlers', () =
     expect(await provider.getByLabel('Kod BLIK', { exact: true }).inputValue()).toBe('012345');
     expect((await request('action', 'POST', lease.token, { ...input, attemptId: crypto.randomUUID() })).status).toBe(409);
     expect(fixture.record!.state).toBe('WAITING_FOR_BLIK');
-    await provider.getByLabel('Kod BLIK', { exact: true }).fill(''); payment.remote.invalidate();
+    await phone.goto(`${fixture.base}/?watch=${fixture.watch.id}`);
+    await phone.getByLabel('Kod BLIK', { exact: true }).fill('012345');
+    await phone.getByRole('button', { name: 'Zapłać 33,81 zł', exact: true }).click();
+    await phone.getByText('Potwierdź płatność w aplikacji bankowej. Czekamy na wynik Intercity.', { exact: true }).waitFor();
+    expect(await provider.evaluate(() => (window as unknown as { submissions: number }).submissions)).toBe(1);
+    expect(await provider.locator('#result').innerText()).toBe('Potwierdź płatność w aplikacji bankowej');
+    await provider.locator('#result').evaluate((element) => { element.textContent = 'Płatność została odrzucona'; });
+    await fixture.manager!.tick();
+    expect(fixture.record!.state).toBe('WAITING_FOR_BLIK');
+    payment.remote.invalidate();
     vi.setSystemTime(new Date(start.getTime() + 12 * 60_000)); await fixture.manager!.tick();
     expect(fixture.record).toMatchObject({ state: 'WAITING_AFTER_DEFERRAL', orderNumber: 'ORDER-1' });
     expect(fixture.record!.expiresAt.getTime()).toBeGreaterThan(start.getTime() + 26 * 60_000);
@@ -172,10 +181,10 @@ describe('Remote browser and deferred checkout through real HTTP handlers', () =
     await phone.screenshot({ path: 'runtime/artifacts/remote-intercity-phone.png', fullPage: true });
     // Simulate LAN HTTP where randomUUID is unavailable in the browser.
     await phone.evaluate(() => { Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true }); });
-    await phone.getByRole('button', { name: 'Element strony: ZAPŁAĆ', exact: true }).click();
+    await phone.getByRole('button', { name: 'Element strony: PŁACĘ', exact: true }).click();
     await phone.getByText('Potwierdź płatność w aplikacji bankowej. Czekamy na wynik Intercity.', { exact: true }).waitFor();
     expect(fixture.record!.state).toBe('PAYMENT_PENDING');
-    expect(await provider.evaluate(() => (window as unknown as { submissions: number }).submissions)).toBe(1);
+    expect(await provider.evaluate(() => (window as unknown as { submissions: number }).submissions)).toBe(2);
     expect(JSON.stringify(fixture.record)).not.toContain('012345');
     const duplicate = await fetch(`${fixture.base}/purchases/${id}/blik`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: '012345', attemptId: fixture.record!.attemptId }) });
     expect(duplicate.status).toBe(202);

@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { ElementHandle, Page } from 'playwright';
 import { PurchaseError, type RemoteAction, type RemoteFrame, type RemoteIntent, type RemotePage, type RemoteTarget } from './types.js';
+import { paymentButtonName } from './paymentButtons.js';
 
-const payName = /^zapłać(?: teraz)?(?:\s+[\d\s,.]+\s*zł)?$/i;
 const deferName = /^(?:zapłać później|przejdź do oczekujących na płatność)$/i;
 
 /** One browser page; frames and input values are never written to disk or logs. */
@@ -74,7 +74,7 @@ export class IntercityRemotePage implements RemotePage {
             const button = element?.matches('button, [role="button"]') ? element : element?.form?.querySelector('button[type="submit"], button:not([type])');
             return button?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
           });
-          if (payName.test(label)) await intercept('submit');
+          if (paymentButtonName.test(label)) await intercept('submit');
           else if (deferName.test(label)) await intercept('defer');
           else throw new PurchaseError('Wybierz widoczny przycisk na stronie zamiast Enter.');
         } else await this.page.keyboard.press(action.key);
@@ -101,7 +101,7 @@ export class IntercityRemotePage implements RemotePage {
           const button = element.closest('button, a, [role="button"]');
           return (button?.getAttribute('aria-label') || button?.textContent || '').replace(/\s+/g, ' ').trim();
         });
-        if (payName.test(name)) await intercept('submit');
+        if (paymentButtonName.test(name)) await intercept('submit');
         else if (deferName.test(name)) await intercept('defer');
         else await target.handle.click({ timeout: 5_000 });
       }

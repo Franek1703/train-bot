@@ -26,6 +26,11 @@ After checkout is prepared, email links to `DASHBOARD_URL?watch=<watch ID>`.
 The dashboard shows passenger, seat, price, deadline and status. The user supplies
 a fresh six-digit code and clicks **Zapłać**. The bot submits it on the retained
 Intercity page; the user authorizes the transaction in their banking app.
+After entering the code, the bot waits for an active **PŁACĘ** button and clicks
+it once. The legacy **ZAPŁAĆ** label is also supported, including labels with
+the amount. The same matcher protects native clicks and Enter in the remote
+view; **ZAPŁAĆ PÓŹNIEJ** is never matched as payment. Sanitized logs report code
+entry, click start/completion or an uncertain click without including the code.
 Only an explicit Intercity success message marks a purchase `PAID`.
 
 The BLIK panel offers an expandable summary screenshot and a link to the full

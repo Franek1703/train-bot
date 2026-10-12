@@ -3,6 +3,7 @@ import { extractSeatAssignment } from '../checker/parser.js';
 import type { PaymentObservation, PurchasePage } from './types.js';
 import { PaymentNotSubmittedError, PurchasePreparationError } from './types.js';
 import { IntercityRemotePage } from './remotePage.js';
+import { paymentButtonName } from './paymentButtons.js';
 
 interface BookingExpectation {
   trainNumber: string | null; departureTime: string | null; travelClass: number; passengers: number;
@@ -147,6 +148,9 @@ export class IntercityPaymentPage implements PurchasePage {
   }
 
   async submit(code: string): Promise<void> {
+    if (this.submitted) throw new Error('Płatność została już wysłana.');
+    const pay = this.page.getByRole('button', { name: paymentButtonName })
+      .and(this.page.locator('button:not([disabled]):not([aria-disabled="true"])')).filter({ visible: true });
     try {
       const text = await this.body();
       this.verifyBooking(text);
@@ -157,14 +161,25 @@ export class IntercityPaymentPage implements PurchasePage {
         throw new Error('Changed payment details');
       }
       await this.code.fill(code);
+      await this.code.blur();
+      console.log(JSON.stringify({ level: 'info', message: 'BLIK code entered on Intercity payment page' }));
+      await pay.waitFor({ state: 'visible', timeout: 5_000 });
     } catch {
-      throw new PaymentNotSubmittedError('Dane płatności lub pole BLIK są niedostępne. Kod nie został wysłany do płatności.');
+      console.error(JSON.stringify({ level: 'error', message: 'Intercity payment was not submitted; checkout or active payment button unavailable' }));
+      throw new PaymentNotSubmittedError('Dane płatności, pole BLIK lub aktywny przycisk Płacę są niedostępne. Kod nie został wysłany do płatności.');
+    } finally {
+      code = '';
     }
     this.submitted = true;
     // Never log Playwright errors from this method: they may include the input value.
+    console.log(JSON.stringify({ level: 'info', message: 'Clicking Intercity payment button' }));
     try {
-      await this.page.getByRole('button', { name: /^zapłać(?:\s+[\d\s,.]+\s*zł)?$/i }).click();
-    } finally { code = ''; }
+      await pay.click({ timeout: 5_000 });
+      console.log(JSON.stringify({ level: 'info', message: 'Intercity payment button click completed' }));
+    } catch {
+      console.error(JSON.stringify({ level: 'error', message: 'Intercity payment button click result is uncertain' }));
+      throw new Error('Nie można potwierdzić wyniku kliknięcia przycisku płatności Intercity.');
+    }
   }
 
   async observe(): Promise<PaymentObservation> {
