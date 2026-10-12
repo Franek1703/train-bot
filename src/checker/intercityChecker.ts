@@ -6,6 +6,8 @@ import { env } from '../config/env.js';
 import { recordCheckLog } from '../scheduler/checkLogger.js';
 import { extractSeatAssignment, resultFromStatus } from './parser.js';
 import type { AvailabilityChecker, AvailabilityResult } from './types.js';
+import { purchaseManager } from '../purchases/index.js';
+import { IntercityPaymentPage, readReservationExpiry } from '../purchases/intercityPaymentPage.js';
 
 export class PlaywrightIntercityChecker implements AvailabilityChecker {
   async checkAvailability(watch: Watch): Promise<AvailabilityResult> {
@@ -26,6 +28,8 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
       timezoneId: env.TIMEZONE,
     });
     const page = await context.newPage();
+    let transferred = false;
+    let reservationExpiresAt: Date | undefined;
 
     try {
       if (!watch.journeyUrl) {
@@ -39,6 +43,10 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
       await proceedToSummary(page, watch);
       await loginIfRequired(page, watch);
       const summaryState = await waitForSummary(page, watch);
+      if (watch.purchaseMode === 'blik' && summaryState === 'summary') {
+        // Read before screenshots and seat polling consume reservation time.
+        reservationExpiresAt = await readReservationExpiry(page).catch(() => undefined);
+      }
 
       if (summaryState === 'overbooked') {
         const overbookedScreenshotPath = await savePageScreenshot(page, watch.id, 'overbooked');
@@ -69,15 +77,14 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
         });
       }
 
-      const summaryScreenshotPath = await savePageScreenshot(page, watch.id, 'summary');
+      const seatAssignment = await readSeatAssignment(page, watch.id);
+      const summaryScreenshotPath = await savePageScreenshot(page, watch.id, 'summary', watch.purchaseMode === 'blik');
 
       const stepScreenshots: Record<string, string | undefined> = {
         list: listScreenshotPath,
         journey: journeyScreenshotPath,
         summary: summaryScreenshotPath,
       };
-
-      const seatAssignment = await readSeatAssignment(page, watch.id);
 
       if (!seatAssignment) {
         logInfo('Summary page did not contain assigned seat text', {
@@ -101,6 +108,26 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
         seatAssignment,
         addToCart: env.ADD_TO_CART,
       });
+
+      if (watch.purchaseMode === 'blik') {
+        if (!watch.purchaseConsent) throw new Error('BLIK purchase requires consent');
+        logInfo('Preparing BLIK payment page', { watchId: watch.id });
+        transferred = true;
+        const purchase = await purchaseManager.prepare(watch.id, seatAssignment, reservationExpiresAt,
+          new IntercityPaymentPage(page, browser, seatAssignment, watch));
+        logInfo('BLIK checkout preparation finished', { watchId: watch.id, purchaseId: purchase.id, state: purchase.state, errorMessage: purchase.errorMessage });
+        return resultFromStatus('AVAILABLE_WITH_SEAT', {
+          trainNumber: watch.trainNumber ?? undefined,
+          departureTime: watch.departureTime ?? undefined,
+          purchaseSessionId: purchase.id,
+          purchaseUrl: purchase.intercityUrl ?? undefined,
+          price: purchase.price ?? undefined,
+          rawStatus: seatAssignment,
+          rawPayload: { seatAssignment, purchaseSessionId: purchase.id },
+          screenshotPath: summaryScreenshotPath,
+          durationMs: Date.now() - startedAt,
+        });
+      }
 
       if (env.ADD_TO_CART) {
         await addToCart(page, watch);
@@ -151,7 +178,7 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
         durationMs: Date.now() - startedAt,
       });
     } finally {
-      await browser.close();
+      if (!transferred) await browser.close();
     }
   }
 }
@@ -694,8 +721,9 @@ async function savePageScreenshot(
   page: Page,
   watchId: string,
   label: string,
+  required = false,
 ): Promise<string | undefined> {
-  if (!env.SAVE_SCREENSHOTS) {
+  if (!env.SAVE_SCREENSHOTS && !required) {
     return undefined;
   }
 

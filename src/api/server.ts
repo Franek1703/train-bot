@@ -3,8 +3,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { stat } from 'node:fs/promises';
 import type { Server } from 'node:net';
 import { ZodError } from 'zod';
+import { z } from 'zod';
 import { env } from '../config/env.js';
-import { getArtifactById } from '../artifacts/artifactRepository.js';
+import { getArtifactById, getPurchaseSummaryArtifactId } from '../artifacts/artifactRepository.js';
 import { listErrors, getErrorById } from '../errors/errorRepository.js';
 import { processSingleWatch } from '../scheduler/scheduler.js';
 import {
@@ -17,6 +18,34 @@ import {
   updateWatch,
 } from '../watches/watchRepository.js';
 import { watchInputSchema, watchUpdateSchema } from './watchSchemas.js';
+import { latestPurchase, reviewUnknownPurchase } from '../purchases/purchaseRepository.js';
+import { purchaseManager } from '../purchases/index.js';
+import { PurchaseError } from '../purchases/types.js';
+
+export const blikInputSchema = z.object({
+  code: z.string().regex(/^\d{6}$/, 'Kod BLIK musi mieć 6 cyfr.'),
+  attemptId: z.string().uuid(),
+});
+
+const remoteActionSchema = z.intersection(z.object({ frameId: z.string().uuid(), attemptId: z.string().uuid() }), z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('click'), targetId: z.string().uuid() }),
+  z.object({ kind: z.literal('fill'), targetId: z.string().uuid(), text: z.string().max(2_000) }),
+  z.object({ kind: z.literal('select'), targetId: z.string().uuid(), value: z.string().max(200) }),
+  z.object({ kind: z.literal('scroll'), deltaY: z.number().min(-2_000).max(2_000) }),
+  z.object({ kind: z.literal('key'), key: z.enum(['Tab', 'Escape', 'Backspace', 'ArrowDown', 'ArrowUp', 'Enter']) }),
+]));
+
+function assertDashboardOrigin(request: IncomingMessage): void {
+  const origin = request.headers.origin;
+  if (!origin) return;
+  const configured = new URL(env.DASHBOARD_URL);
+  const source = new URL(origin);
+  const host = new URL(`http://${request.headers.host ?? 'localhost'}`);
+  const sameHostDashboard = source.hostname === host.hostname && source.port === configured.port && source.protocol === configured.protocol;
+  if (origin !== configured.origin && origin !== env.DASHBOARD_ORIGIN && !sameHostDashboard) {
+    throw new PurchaseError('Niedozwolone źródło żądania.', 403);
+  }
+}
 
 interface RouteContext {
   request: IncomingMessage;
@@ -49,7 +78,7 @@ export async function startApiServer(): Promise<Server> {
   return server;
 }
 
-async function handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+export async function handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
   setCorsHeaders(response);
 
   if (request.method === 'OPTIONS') {
@@ -80,6 +109,46 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
   if (parts[0] === 'artifacts') {
     await handleArtifacts(context);
     return;
+  }
+
+  if (parts[0] === 'purchases' && parts.length === 3 && parts[2] === 'blik' && request.method === 'POST') {
+    // Private dashboard only; reject cross-site browser payment requests.
+    assertDashboardOrigin(request);
+    const input = blikInputSchema.parse(await readJson(request));
+    try { await purchaseManager.submit(parts[1], input.code, input.attemptId); }
+    finally { input.code = ''; }
+    sendJson(response, 202, { accepted: true });
+    return;
+  }
+
+  if (parts[0] === 'purchases' && parts.length === 3 && parts[2] === 'resume-payment' && request.method === 'POST') {
+    assertDashboardOrigin(request);
+    await purchaseManager.resumeDeferred(parts[1]);
+    sendJson(response, 200, { ok: true });
+    return;
+  }
+
+  if (parts[0] === 'purchases' && parts.length === 4 && parts[2] === 'browser') {
+    assertDashboardOrigin(request);
+    const id = parts[1];
+    const token = request.headers.authorization?.replace(/^Bearer /, '');
+    if (parts[3] === 'frame' && request.method === 'GET') {
+      sendJson(response, 200, await purchaseManager.remoteFrame(id, token)); return;
+    }
+    if (parts[3] === 'control') {
+      if (request.method === 'POST') {
+        const input = z.object({ takeover: z.boolean().optional() }).parse(await readJson(request));
+        sendJson(response, 200, purchaseManager.acquireControl(id, input.takeover)); return;
+      }
+      if (request.method === 'PATCH') { sendJson(response, 200, purchaseManager.renewControl(id, token)); return; }
+      if (request.method === 'DELETE') { purchaseManager.releaseControl(id, token); sendJson(response, 200, { ok: true }); return; }
+    }
+    if (parts[3] === 'action' && request.method === 'POST') {
+      const action = remoteActionSchema.parse(await readJson(request));
+      try { await purchaseManager.remoteAction(id, token, action, action.attemptId); }
+      finally { if (action.kind === 'fill') action.text = ''; }
+      sendJson(response, 200, { ok: true }); return;
+    }
   }
 
   sendError(response, 404, 'Not found');
@@ -117,12 +186,14 @@ async function handleWatches(context: RouteContext): Promise<void> {
   }
 
   if (request.method === 'PATCH' && parts.length === 2) {
+    if (purchaseManager.busy) throw new PurchaseError('Konto Intercity jest zajęte. Poczekaj z edycją watchera.');
     const body = watchUpdateSchema.parse(await readJson(request));
     sendJson(response, 200, { watch: await updateWatch(watchId, body) });
     return;
   }
 
   if (request.method === 'DELETE' && parts.length === 2) {
+    if (purchaseManager.busy) throw new PurchaseError('Konto Intercity jest zajęte. Poczekaj z usunięciem watchera.');
     await deleteWatch(watchId);
     sendJson(response, 200, { ok: true });
     return;
@@ -134,6 +205,13 @@ async function handleWatches(context: RouteContext): Promise<void> {
   }
 
   if (request.method === 'POST' && parts[2] === 'resume') {
+    if (purchaseManager.busy) throw new PurchaseError('Konto Intercity jest zajęte. Poczekaj z wznowieniem watchera.');
+    const purchase = await latestPurchase(watchId);
+    const body = z.object({ acknowledgeUnknown: z.boolean().optional() }).parse(await readJson(request));
+    if (purchase?.state === 'UNKNOWN' && !purchase.reviewedAt && !body.acknowledgeUnknown) {
+      throw new PurchaseError('Sprawdź zamówienie na koncie Intercity i potwierdź sprawdzenie przed wznowieniem.');
+    }
+    if (purchase?.state === 'UNKNOWN' && body.acknowledgeUnknown) await reviewUnknownPurchase(purchase.id);
     sendJson(response, 200, { watch: await setWatchActive(watchId, true) });
     return;
   }
@@ -144,9 +222,25 @@ async function handleWatches(context: RouteContext): Promise<void> {
       sendError(response, 404, 'Watch not found');
       return;
     }
+    const lastPurchase = await latestPurchase(watchId);
+    if (lastPurchase?.state === 'UNKNOWN' && !lastPurchase.reviewedAt) {
+      throw new PurchaseError('Sprawdź zamówienie na koncie Intercity, następnie jawnie wznów watcher.');
+    }
 
     const availabilityCheck = await processSingleWatch(watch);
     sendJson(response, 200, { availabilityCheck });
+    return;
+  }
+
+  if (request.method === 'GET' && parts.length === 3 && parts[2] === 'purchase') {
+    if (!await findWatchById(watchId)) throw new PurchaseError('Watch not found', 404);
+    const purchase = await latestPurchase(watchId);
+    const summaryScreenshotArtifactId = purchase
+      ? await getPurchaseSummaryArtifactId(watchId, purchase.availabilityCheckId) : null;
+    sendJson(response, 200, {
+      purchase: purchase ? { ...purchase, summaryScreenshotArtifactId, browserAvailable: purchaseManager.browserAvailable(purchase.id) } : null,
+      serverTime: new Date().toISOString(), accountBusy: purchaseManager.busy,
+    });
     return;
   }
 
@@ -200,19 +294,23 @@ async function handleArtifacts(context: RouteContext): Promise<void> {
 async function readJson(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
 
+  let size = 0;
   for await (const chunk of request) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    size += chunks[chunks.length - 1].length;
+    if (size > 16_384) throw new PurchaseError('Request body too large', 413);
   }
 
   if (chunks.length === 0) {
     return {};
   }
 
-  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown; }
+  catch { throw new PurchaseError('Invalid JSON', 400); }
 }
 
 function sendJson(response: ServerResponse, status: number, body: unknown): void {
-  response.writeHead(status, { 'Content-Type': 'application/json' });
+  response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
   response.end(JSON.stringify(body));
 }
 
@@ -223,7 +321,7 @@ function sendError(response: ServerResponse, status: number, message: string): v
 function setCorsHeaders(response: ServerResponse): void {
   response.setHeader('Access-Control-Allow-Origin', env.DASHBOARD_ORIGIN);
   response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-  response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
 }
 
 process.on('uncaughtException', (error) => {
@@ -241,6 +339,7 @@ process.on('unhandledRejection', (error) => {
 });
 
 export function normalizeApiError(error: unknown): { status: number; message: string } {
+  if (error instanceof PurchaseError) return { status: error.status, message: error.message };
   if (error instanceof ZodError) {
     return { status: 400, message: error.issues.map((issue) => issue.message).join('; ') };
   }

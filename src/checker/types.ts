@@ -28,6 +28,7 @@ export interface AvailabilityResult {
     bodyPreview?: string;
   };
   durationMs?: number;
+  purchaseSessionId?: string;
 }
 
 export interface AvailabilityChecker {

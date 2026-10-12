@@ -9,6 +9,7 @@
     "start": "node dist/src/index.js",
     "start:docker": "prisma migrate deploy && node dist/src/index.js",
     "test": "vitest run",
+    "test:browser": "vitest run --config vitest.browser.config.ts",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "check:once": "tsx src/checkOnce.ts",

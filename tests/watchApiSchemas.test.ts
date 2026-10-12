@@ -39,4 +39,11 @@ describe('watch API schemas', () => {
   it('allows partial watcher updates', () => {
     expect(watchUpdateSchema.parse({ active: false })).toEqual({ active: false });
   });
+
+  it('preserves notification mode by default and accepts explicit BLIK configuration', () => {
+    const input = { searchUrl: 'https://ebilet.intercity.pl/wyszukiwanie', origin: 'Poznań', destination: 'Warszawa', date: '2026-10-11', travelClass: 2, passengers: 1 };
+    expect(watchInputSchema.parse(input)).toMatchObject({ purchaseMode: 'notify', purchaseConsent: false });
+    expect(watchInputSchema.parse({ ...input, purchaseMode: 'blik', purchaseConsent: true })).toMatchObject({ purchaseMode: 'blik', purchaseConsent: true });
+    expect(() => watchInputSchema.parse({ ...input, purchaseMode: 'card' })).toThrow();
+  });
 });

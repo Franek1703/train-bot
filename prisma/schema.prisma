@@ -19,6 +19,8 @@ model Watch {
   travelClass          Int                 @default(2) @map("travel_class")
   passengers           Int                 @default(1)
   seatRequired         Boolean             @default(true) @map("seat_required")
+  purchaseMode         String              @default("notify") @map("purchase_mode")
+  purchaseConsent      Boolean             @default(false) @map("purchase_consent")
   checkIntervalMinutes Int                 @default(5) @map("check_interval_minutes")
   active               Boolean             @default(true)
   notificationChannel  String              @default("email") @map("notification_channel")
@@ -33,6 +35,7 @@ model Watch {
   notifications        Notification[]
   artifacts            WatchArtifact[]
   errors               WatchError[]
+  purchases            PurchaseSession[]
 
   @@map("watches")
 }
@@ -58,9 +61,35 @@ model AvailabilityCheck {
   notifications  Notification[]
   artifacts      WatchArtifact[]
   errors         WatchError[]
+  purchases      PurchaseSession[]
 
   @@index([watchId, checkedAt])
   @@map("availability_checks")
+}
+
+model PurchaseSession {
+  id                  String             @id @default(uuid()) @db.Uuid
+  watchId             String             @map("watch_id") @db.Uuid
+  availabilityCheckId String?            @map("availability_check_id") @db.Uuid
+  state               String             @default("PREPARING")
+  passengerName       String?            @map("passenger_name")
+  seatAssignment      String             @map("seat_assignment")
+  price               String?
+  expiresAt           DateTime           @map("expires_at")
+  acceptCodeUntil     DateTime           @map("accept_code_until")
+  attemptId           String?            @map("attempt_id") @db.Uuid
+  orderNumber         String?            @map("order_number")
+  intercityUrl        String?            @map("intercity_url")
+  errorMessage        String?            @map("error_message")
+  reviewedAt          DateTime?          @map("reviewed_at")
+  deferredAt          DateTime?          @map("deferred_at")
+  createdAt           DateTime           @default(now()) @map("created_at")
+  updatedAt           DateTime           @updatedAt @map("updated_at")
+  watch               Watch              @relation(fields: [watchId], references: [id], onDelete: Cascade)
+  availabilityCheck   AvailabilityCheck? @relation(fields: [availabilityCheckId], references: [id], onDelete: SetNull)
+
+  @@index([watchId, createdAt])
+  @@map("purchase_sessions")
 }
 
 model WatchArtifact {
@@ -111,9 +140,11 @@ model Notification {
   message             String
   status              String             @default("sent")
   errorMessage        String?            @map("error_message")
+  eventKey            String?            @map("event_key")
   watch               Watch              @relation(fields: [watchId], references: [id], onDelete: Cascade)
   availabilityCheck   AvailabilityCheck? @relation(fields: [availabilityCheckId], references: [id], onDelete: SetNull)
 
   @@index([watchId, sentAt])
+  @@index([eventKey, status])
   @@map("notifications")
 }

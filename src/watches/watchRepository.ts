@@ -6,6 +6,7 @@ import { prisma } from '../db/client.js';
 import { env } from '../config/env.js';
 import type { AvailabilityStatus } from '../checker/types.js';
 import type { WatchConfig, WatchInput } from './types.js';
+import { PurchaseError, activePurchaseStates } from '../purchases/types.js';
 
 function toTravelDate(date: string): Date {
   return new Date(`${date}T00:00:00.000Z`);
@@ -15,6 +16,7 @@ export async function syncConfiguredWatches(watches: WatchConfig[]): Promise<Wat
   const synced: Watch[] = [];
 
   for (const watch of watches) {
+    validatePurchaseConfiguration(watch);
     synced.push(
       await prisma.watch.upsert({
         where: { configKey: watch.id },
@@ -32,6 +34,8 @@ export async function syncConfiguredWatches(watches: WatchConfig[]): Promise<Wat
           checkIntervalMinutes: watch.intervalMinutes,
           active: watch.active,
           notificationChannel: 'email',
+          purchaseMode: watch.purchaseMode ?? 'notify',
+          purchaseConsent: watch.purchaseConsent ?? false,
         },
         update: {
           journeyUrl: watch.searchUrl,
@@ -46,6 +50,8 @@ export async function syncConfiguredWatches(watches: WatchConfig[]): Promise<Wat
           checkIntervalMinutes: watch.intervalMinutes,
           active: watch.active,
           notificationChannel: 'email',
+          purchaseMode: watch.purchaseMode ?? 'notify',
+          purchaseConsent: watch.purchaseConsent ?? false,
         },
       }),
     );
@@ -98,12 +104,18 @@ export async function findWatchDetails(watchId: string) {
 }
 
 export async function createWatch(input: WatchInput): Promise<Watch> {
+  validatePurchaseConfiguration(input);
   return prisma.watch.create({
     data: toCreateWatchData(input),
   });
 }
 
 export async function updateWatch(watchId: string, input: Partial<WatchInput>): Promise<Watch> {
+  await assertWatchMutable(watchId);
+  const existing = await findWatchById(watchId);
+  if (!existing) throw new PurchaseError('Watch not found', 404);
+  validatePurchaseConfiguration({ ...existing, ...input } as WatchInput);
+  if (input.active) await assertPurchaseReviewed(watchId);
   return prisma.watch.update({
     where: { id: watchId },
     data: toWatchData(input),
@@ -111,13 +123,18 @@ export async function updateWatch(watchId: string, input: Partial<WatchInput>): 
 }
 
 export async function setWatchActive(watchId: string, active: boolean): Promise<Watch> {
+  if (active) {
+    await assertWatchMutable(watchId);
+    await assertPurchaseReviewed(watchId);
+  }
   return prisma.watch.update({
     where: { id: watchId },
-    data: { active },
+    data: { active, ...(active ? { lastKnownStatus: null } : {}) },
   });
 }
 
 export async function deleteWatch(watchId: string): Promise<void> {
+  await assertWatchMutable(watchId);
   await prisma.watch.delete({
     where: { id: watchId },
   });
@@ -170,6 +187,8 @@ function toCreateWatchData(input: WatchInput): Prisma.WatchCreateInput {
     active: input.active ?? true,
     notificationChannel: 'email',
     notificationTarget: input.notificationTarget,
+    purchaseMode: input.purchaseMode ?? 'notify',
+    purchaseConsent: input.purchaseConsent ?? false,
   };
 }
 
@@ -189,5 +208,25 @@ function toWatchData(input: Partial<WatchInput>): Prisma.WatchUpdateInput {
     active: input.active,
     notificationChannel: 'email',
     notificationTarget: input.notificationTarget,
+    purchaseMode: input.purchaseMode,
+    purchaseConsent: input.purchaseConsent,
   };
+}
+
+export function validatePurchaseConfiguration(input: Pick<WatchInput, 'purchaseMode' | 'purchaseConsent'>): void {
+  if (input.purchaseMode !== 'blik') return;
+  if (!input.purchaseConsent) throw new PurchaseError('Tryb BLIK wymaga zgody na wymagane regulaminy Intercity.', 400);
+  if (!env.INTERCITY_EMAIL || !env.INTERCITY_PASSWORD) throw new PurchaseError('Tryb BLIK wymaga skonfigurowanego konta Intercity.', 400);
+}
+
+export async function assertWatchMutable(watchId: string): Promise<void> {
+  const active = await prisma.purchaseSession.findFirst({ where: { watchId, state: { in: activePurchaseStates } } });
+  if (active) throw new PurchaseError('Watcher ma aktywną sesję zakupu. Poczekaj na jej zakończenie.');
+}
+
+async function assertPurchaseReviewed(watchId: string): Promise<void> {
+  const latest = await prisma.purchaseSession.findFirst({ where: { watchId }, orderBy: { createdAt: 'desc' } });
+  if (latest?.state === 'UNKNOWN' && !latest.reviewedAt) {
+    throw new PurchaseError('Sprawdź zamówienie na koncie Intercity i potwierdź sprawdzenie przed wznowieniem.');
+  }
 }

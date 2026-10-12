@@ -17,6 +17,8 @@ export interface Watch {
   lastCheckedAt?: string;
   lastNotifiedAt?: string;
   consecutiveErrors: number;
+  purchaseMode: 'notify' | 'blik';
+  purchaseConsent: boolean;
 }
 
 export interface AvailabilityCheck {
@@ -65,6 +67,55 @@ export interface WatchInput {
   intervalMinutes: number;
   active: boolean;
   notificationTarget?: string;
+  purchaseMode: 'notify' | 'blik';
+  purchaseConsent: boolean;
+}
+
+export interface PurchaseSession {
+  id: string;
+  watchId: string;
+  state: 'PREPARING' | 'WAITING_FOR_BLIK' | 'WAITING_AFTER_DEFERRAL' | 'PAYMENT_PENDING' | 'PAID' | 'DEFERRED' | 'EXPIRED' | 'FAILED' | 'UNKNOWN';
+  passengerName: string | null;
+  seatAssignment: string;
+  price: string | null;
+  expiresAt: string;
+  acceptCodeUntil: string;
+  errorMessage: string | null;
+  intercityUrl: string | null;
+  orderNumber: string | null;
+  summaryScreenshotArtifactId: string | null;
+  browserAvailable: boolean;
+  deferredAt: string | null;
+}
+
+export interface RemoteTarget {
+  id: string; label: string; kind: 'click' | 'input' | 'select'; sensitive: boolean;
+  x: number; y: number; width: number; height: number;
+  options?: Array<{ value: string; label: string }>;
+}
+export interface BrowserFrame {
+  frame: { id: string; image: string; width: number; height: number; targets: RemoteTarget[] };
+  ownsControl: boolean; controlBusy: boolean; canControl: boolean; state: PurchaseSession['state'];
+}
+
+// crypto.randomUUID is unavailable on ordinary LAN HTTP addresses.
+export function newAttemptId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 15) | 64;
+  bytes[8] = (bytes[8] & 63) | 128;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export async function browserRequest<T>(purchaseId: string, route: string, method = 'GET', token?: string, body?: unknown): Promise<T> {
+  return request<T>(`/purchases/${purchaseId}/browser/${route}`, {
+    method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) { super(message); }
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
@@ -88,7 +139,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const payload = (await response.json().catch(() => ({}))) as { error?: string };
 
   if (!response.ok) {
-    throw new Error(payload.error ?? `Request failed with ${response.status}`);
+    throw new ApiError(payload.error ?? `Request failed with ${response.status}`, response.status);
   }
 
   return payload as T;

@@ -19,6 +19,8 @@ const watchSchema = z.object({
   seatRequired: z.boolean().default(true),
   intervalMinutes: z.number().int().min(2).default(5),
   active: z.boolean().default(true),
+  purchaseMode: z.enum(['notify', 'blik']).default('notify'),
+  purchaseConsent: z.boolean().default(false),
 });
 
 const watchesConfigSchema = z.object({

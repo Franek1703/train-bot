@@ -12,7 +12,9 @@
       "passengers": 1,
       "seatRequired": true,
       "intervalMinutes": 5,
-      "active": true
+      "active": true,
+      "purchaseMode": "notify",
+      "purchaseConsent": false
     }
   ]
 }

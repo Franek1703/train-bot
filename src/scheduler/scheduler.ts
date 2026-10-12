@@ -23,6 +23,9 @@ import {
   nextConsecutiveErrors,
   shouldSendNotification,
 } from './watchState.js';
+import { purchaseManager } from '../purchases/index.js';
+import { purchaseRepository } from '../purchases/purchaseRepository.js';
+import { PurchaseError } from '../purchases/types.js';
 
 const checker = new PlaywrightIntercityChecker();
 
@@ -35,7 +38,8 @@ export async function runSchedulerTick(options: SchedulerTickOptions = {}): Prom
     JSON.stringify({
       level: 'info',
       message: 'Scheduler tick started',
-      maxParallelChecks: env.MAX_PARALLEL_CHECKS,
+      maxParallelChecks: 1,
+      configuredMaxParallelChecks: env.MAX_PARALLEL_CHECKS,
       force: options.force ?? false,
     }),
   );
@@ -44,7 +48,8 @@ export async function runSchedulerTick(options: SchedulerTickOptions = {}): Prom
   const dueWatches = options.force
     ? activeWatches
     : activeWatches.filter((watch) => isWatchDueForCheck(watch));
-  const limit = pLimit(env.MAX_PARALLEL_CHECKS);
+  // One configured account: serialize checks so an in-flight cart cannot race a checkout.
+  const limit = pLimit(1);
 
   console.log(
     JSON.stringify({
@@ -67,6 +72,7 @@ export async function runSchedulerTick(options: SchedulerTickOptions = {}): Prom
   await Promise.all(
     dueWatches.map((watch) =>
       limit(async () => {
+        if (purchaseManager.busy) return;
         const delayMs = options.force ? 0 : randomDelayMs();
         console.log(
           JSON.stringify({
@@ -78,7 +84,10 @@ export async function runSchedulerTick(options: SchedulerTickOptions = {}): Prom
           }),
         );
         await sleep(delayMs);
-        await processSingleWatch(watch);
+        if (purchaseManager.busy) return;
+        await processSingleWatch(watch).catch((error) => {
+          if (!(error instanceof PurchaseError)) throw error;
+        });
       }),
     ),
   );
@@ -98,6 +107,7 @@ export async function runScheduler(): Promise<void> {
 
   const stop = (): void => {
     stopped = true;
+    void purchaseManager.shutdown().catch(() => console.error('Could not close purchase session during shutdown'));
   };
 
   process.once('SIGINT', stop);
@@ -114,13 +124,20 @@ export async function runScheduler(): Promise<void> {
       );
     });
 
-    await sleep(env.CHECK_INTERVAL_MINUTES * 60 * 1000);
+    if (!stopped) await purchaseManager.waitForNextCheck(env.CHECK_INTERVAL_MINUTES * 60 * 1000);
   }
 
-  await disconnectDatabase();
+  try { await purchaseManager.shutdown(); }
+  finally { await disconnectDatabase(); }
 }
 
 export async function processSingleWatch(
+  watch: Awaited<ReturnType<typeof findActiveWatches>>[number],
+): Promise<Awaited<ReturnType<typeof saveAvailabilityCheck>>> {
+  return purchaseManager.runCheck(() => processWatchWithAccount(watch));
+}
+
+async function processWatchWithAccount(
   watch: Awaited<ReturnType<typeof findActiveWatches>>[number],
 ): Promise<Awaited<ReturnType<typeof saveAvailabilityCheck>>> {
   console.log(
@@ -137,6 +154,9 @@ export async function processSingleWatch(
 
   const { result, entries } = await captureCheckLogs(() => checker.checkAvailability(watch));
   const availabilityCheck = await saveAvailabilityCheck(watch.id, result);
+  if (result.purchaseSessionId) {
+    await purchaseRepository.update(result.purchaseSessionId, { availabilityCheckId: availabilityCheck.id });
+  }
   const checkedAt = availabilityCheck.checkedAt;
   const consecutiveErrors = nextConsecutiveErrors(watch, result.status);
   const logArtifact = await writeTextArtifact({
@@ -209,7 +229,7 @@ export async function processSingleWatch(
     }),
   );
 
-  if (shouldNotify) {
+  if (shouldNotify && !result.purchaseSessionId) {
     await notifySeatAvailable({
       watch,
       result,

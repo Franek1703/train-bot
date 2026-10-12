@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AlertTriangle, Pause, Play, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import {
@@ -11,6 +11,9 @@ import {
   type WatchInput,
 } from './api';
 import './styles.css';
+import { PurchasePanel } from './PurchasePanel';
+import { RemotePurchaseView } from './RemoteBrowser';
+import type { PurchaseSession } from './api';
 
 type View = 'watches' | 'errors';
 
@@ -27,18 +30,24 @@ const emptyForm: WatchInput = {
   intervalMinutes: 5,
   active: true,
   notificationTarget: '',
+  purchaseMode: 'notify',
+  purchaseConsent: false,
 };
 
 function App() {
   const [view, setView] = useState<View>('watches');
   const [watches, setWatches] = useState<Watch[]>([]);
   const [errors, setErrors] = useState<WatchError[]>([]);
-  const [selectedWatchId, setSelectedWatchId] = useState<string>();
+  const [selectedWatchId, setSelectedWatchId] = useState<string | undefined>(() => new URL(window.location.href).searchParams.get('watch') ?? undefined);
   const [selectedWatch, setSelectedWatch] = useState<WatchDetails>();
   const [form, setForm] = useState<WatchInput>(emptyForm);
   const [editingId, setEditingId] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  const [account, setAccount] = useState<{ busy: boolean; state?: PurchaseSession['state'] }>({ busy: false });
+  const onAccountState = useCallback((accountBusy: boolean, state?: PurchaseSession['state']) => {
+    setAccount((current) => current.busy === accountBusy && current.state === state ? current : { busy: accountBusy, state });
+  }, []);
 
   const selectedListWatch = useMemo(
     () => watches.find((watch) => watch.id === selectedWatchId),
@@ -46,18 +55,22 @@ function App() {
   );
 
   useEffect(() => {
-    void refresh();
+    void refresh().catch(() => setNotice('Nie udało się odświeżyć watcherów.'));
+    const interval = setInterval(() => { void refresh().catch(() => setNotice('Nie udało się odświeżyć watcherów.')); }, 10_000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     if (!selectedWatchId) {
       setSelectedWatch(undefined);
       return;
     }
 
     void apiGet<{ watch: WatchDetails }>(`/watches/${selectedWatchId}`)
-      .then(({ watch }) => setSelectedWatch(watch))
-      .catch((error) => setNotice(error.message));
+      .then(({ watch }) => { if (!cancelled) setSelectedWatch(watch); })
+      .catch((error) => { if (!cancelled) setNotice(error.message); });
+    return () => { cancelled = true; };
   }, [selectedWatchId]);
 
   async function refresh() {
@@ -96,10 +109,15 @@ function App() {
   }
 
   async function action(path: string, message: string) {
+    let body: { acknowledgeUnknown: boolean } | undefined;
+    if (path.endsWith('/resume') && account.state === 'UNKNOWN') {
+      if (!window.confirm('Sprawdź zamówienie na koncie Intercity przed nową próbą zakupu. Czy sprawdziłeś wynik i chcesz wznowić monitorowanie?')) return;
+      body = { acknowledgeUnknown: true };
+    }
     setBusy(true);
     setNotice('');
     try {
-      await apiSend(path, 'POST');
+      await apiSend(path, 'POST', body);
       setNotice(message);
       await refresh();
       if (selectedWatchId) {
@@ -142,6 +160,8 @@ function App() {
       intervalMinutes: watch.checkIntervalMinutes,
       active: watch.active,
       notificationTarget: '',
+      purchaseMode: watch.purchaseMode,
+      purchaseConsent: watch.purchaseConsent,
     });
   }
 
@@ -193,6 +213,11 @@ function App() {
                   <label className="check"><input type="checkbox" checked={form.active} onChange={(event) => setForm({ ...form, active: event.target.checked })} />Active</label>
                 </div>
                 <label className="check"><input type="checkbox" checked={form.seatRequired} onChange={(event) => setForm({ ...form, seatRequired: event.target.checked })} />Seat required</label>
+                <label className="check"><input type="checkbox" checked={form.purchaseMode === 'blik'} onChange={(event) => setForm({ ...form, purchaseMode: event.target.checked ? 'blik' : 'notify', purchaseConsent: false })} />Przygotuj zakup z płatnością BLIK</label>
+                {form.purchaseMode === 'blik' && <>
+                  <p className="muted">Dane podróżnego z konta Intercity. Po znalezieniu miejsca wpiszesz kod BLIK tutaj i potwierdzisz płatność w banku.</p>
+                  <label className="check"><input type="checkbox" checked={form.purchaseConsent} required onChange={(event) => setForm({ ...form, purchaseConsent: event.target.checked })} />Zgadzam się na zaznaczenie wymaganych regulaminów e-IC i Moje IC. Bez faktury i darowizny.</label>
+                </>}
                 <div className="form-actions">
                   <button disabled={busy} type="submit"><Plus size={16} />{editingId ? 'Save' : 'Add'}</button>
                   {editingId && <button type="button" onClick={() => { setEditingId(undefined); setForm(emptyForm); }}>Cancel</button>}
@@ -219,16 +244,17 @@ function App() {
                       <p>{selectedListWatch.origin} to {selectedListWatch.destination}</p>
                     </div>
                     <div className="actions">
-                      <button title="Edit" onClick={() => editWatch(selectedListWatch)}>Edit</button>
-                      <button title="Check now" onClick={() => void action(`/watches/${selectedListWatch.id}/check-now`, 'Manual check finished.')}><RefreshCw size={16} /></button>
+                      <button title="Edit" disabled={account.busy} onClick={() => editWatch(selectedListWatch)}>Edit</button>
+                      <button title="Check now" disabled={account.busy || account.state === 'UNKNOWN'} onClick={() => void action(`/watches/${selectedListWatch.id}/check-now`, 'Manual check finished.')}><RefreshCw size={16} /></button>
                       {selectedListWatch.active ? (
                         <button title="Stop" onClick={() => void action(`/watches/${selectedListWatch.id}/stop`, 'Watcher stopped.')}><Pause size={16} /></button>
                       ) : (
-                        <button title="Resume" onClick={() => void action(`/watches/${selectedListWatch.id}/resume`, 'Watcher resumed.')}><Play size={16} /></button>
+                        <button title="Resume" disabled={account.busy} onClick={() => void action(`/watches/${selectedListWatch.id}/resume`, 'Watcher resumed.')}><Play size={16} /></button>
                       )}
-                      <button title="Delete" onClick={() => void removeWatch(selectedListWatch.id)}><Trash2 size={16} /></button>
+                      <button title="Delete" disabled={account.busy} onClick={() => void removeWatch(selectedListWatch.id)}><Trash2 size={16} /></button>
                     </div>
                   </div>
+                  <PurchasePanel key={selectedListWatch.id} watch={selectedListWatch} onAccountState={onAccountState} />
                   <History watch={selectedWatch} />
                 </>
               )}
@@ -296,4 +322,6 @@ function normalizeForm(form: WatchInput): WatchInput {
   };
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+const locationParams = new URL(window.location.href).searchParams;
+const remoteWatch = locationParams.get('view') === 'intercity' ? locationParams.get('watch') : null;
+createRoot(document.getElementById('root')!).render(remoteWatch ? <RemotePurchaseView watchId={remoteWatch} /> : <App />);
