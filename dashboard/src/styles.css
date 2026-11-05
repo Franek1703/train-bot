@@ -278,6 +278,11 @@ main {
   margin-bottom: 12px;
 }
 
+.mode-tabs button {
+  background: #e2e8f0;
+  color: #1c2430;
+}
+
 .mode-tabs button.active {
   background: #1e6f5c;
   color: white;
