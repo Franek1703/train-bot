@@ -1,8 +1,9 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { chromium, firefox, type Browser, type BrowserType, type Locator, type Page } from 'playwright';
+import type { Locator, Page } from 'playwright';
 import type { Watch } from '@prisma/client';
 import { env } from '../config/env.js';
+import { launchIntercityBrowser } from './browser.js';
 import { recordCheckLog } from '../scheduler/checkLogger.js';
 import { extractSeatAssignment, resultFromStatus } from './parser.js';
 import type { AvailabilityChecker, AvailabilityResult } from './types.js';
@@ -840,24 +841,4 @@ function logError(message: string, context: Record<string, unknown> = {}): void 
 
 export function trainNumberRegex(trainNumber: string): RegExp {
   return new RegExp(trainNumber.trim().replace(/\s+/g, '\\s*'), 'i');
-}
-
-async function launchIntercityBrowser(): Promise<Browser> {
-  const browserType = resolveIntercityBrowserType();
-  logInfo('Launching browser for Intercity check', {
-    browser: browserType.name(),
-    headless: env.HEADLESS,
-  });
-
-  return browserType.launch({ headless: env.HEADLESS });
-}
-
-function resolveIntercityBrowserType(): BrowserType {
-  // Intercity blocks Chromium headless navigation (page stays on about:blank).
-  // Firefox works reliably in both headless and headed mode.
-  if (env.HEADLESS) {
-    return firefox;
-  }
-
-  return chromium;
 }

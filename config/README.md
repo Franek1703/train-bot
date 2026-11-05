@@ -71,3 +71,18 @@ Mode defaults to `notify`. BLIK uses `blik`, requires `purchaseConsent: true`
 and uses account passenger data. Optional `notificationTarget` overrides
 `EMAIL_TO`. Class must be 1 or 2, passenger count 1–9 and interval at least two
 minutes. Search URL passengers/discounts must match the desired journey.
+Optional `arrivalTime` (`HH:mm`), `trainName` and `ticketLabel` are display
+details filled in by the dashboard's link flow.
+
+### Adding a watcher from a journey link
+
+The dashboard's default **Z linku podróży** tab accepts the URL of Intercity's
+"Twoja podróż" page (`https://ebilet.intercity.pl/wybormiejsc?dwyj=…`). That
+page does not identify the train when opened in a fresh session, so the backend
+rewrites it to `/wyszukiwanie` with the same whitelisted parameters, loads the
+result list as a guest (about 10 s) and selects the train departing one minute
+after `time` (the way Intercity builds that URL). When the match is uncertain,
+the dashboard asks you to choose from the day's direct connections. After
+**Zatwierdź** the watcher is created with the derived search URL; the bot still
+runs the normal search → select → journey flow. Check a link without the
+dashboard: `npm run preview:once -- "<url>"`. Transfers are not supported.

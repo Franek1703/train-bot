@@ -8,7 +8,7 @@ the [configuration guide](../config/README.md).
 
 | Model | Stores |
 | --- | --- |
-| `Watch` | Journey, mode, consent, interval and latest status |
+| `Watch` | Journey (incl. arrival time, train name, ticket label), mode, consent, interval and latest status |
 | `AvailabilityCheck` | Historical results, timing and diagnostics |
 | `PurchaseSession` | State, seat, amount, deadlines, attempt/order IDs and review/deferral timestamps |
 | `WatchArtifact` | File paths and artifact metadata |

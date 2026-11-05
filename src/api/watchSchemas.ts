@@ -20,6 +20,13 @@ export const watchInputSchema = z.object({
   notificationTarget: z.string().email().optional(),
   purchaseMode: z.enum(['notify', 'blik']).default('notify'),
   purchaseConsent: z.boolean().default(false),
+  arrivalTime: timeSchema.optional(),
+  trainName: z.string().min(1).max(100).optional(),
+  ticketLabel: z.string().min(1).max(200).optional(),
+});
+
+export const journeyPreviewSchema = z.object({
+  url: z.string().min(1).max(2_000),
 });
 
 export const watchUpdateSchema = watchInputSchema.partial();

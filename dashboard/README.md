@@ -24,6 +24,7 @@ dashboard through nginx.
 | Entry point | Responsibility |
 | --- | --- |
 | `src/main.tsx` | Watcher form/list, history, artifacts, error center and routing |
+| `src/JourneyLinkForm.tsx` | Paste a "Twoja podróż" link, preview the train from `POST /journeys/preview`, approve to create the watcher |
 | `src/PurchasePanel.tsx` | Purchase details, countdown, summary and BLIK submission |
 | `src/RemoteBrowser.tsx` | Retained page, controller lease, input editor, scrolling and zoom |
 | `src/api.ts` | API calls, DTOs, artifact URLs and attempt identifiers |

@@ -189,6 +189,9 @@ function toCreateWatchData(input: WatchInput): Prisma.WatchCreateInput {
     notificationTarget: input.notificationTarget,
     purchaseMode: input.purchaseMode ?? 'notify',
     purchaseConsent: input.purchaseConsent ?? false,
+    arrivalTime: input.arrivalTime,
+    trainName: input.trainName,
+    ticketLabel: input.ticketLabel,
   };
 }
 
@@ -210,6 +213,9 @@ function toWatchData(input: Partial<WatchInput>): Prisma.WatchUpdateInput {
     notificationTarget: input.notificationTarget,
     purchaseMode: input.purchaseMode,
     purchaseConsent: input.purchaseConsent,
+    arrivalTime: input.arrivalTime,
+    trainName: input.trainName,
+    ticketLabel: input.ticketLabel,
   };
 }
 

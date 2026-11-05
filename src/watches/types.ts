@@ -35,4 +35,7 @@ export interface WatchInput {
   notificationTarget?: string;
   purchaseMode?: 'notify' | 'blik';
   purchaseConsent?: boolean;
+  arrivalTime?: string;
+  trainName?: string;
+  ticketLabel?: string;
 }

@@ -271,3 +271,46 @@ main {
     grid-template-columns: 1fr;
   }
 }
+
+.mode-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.mode-tabs button.active {
+  background: #1e6f5c;
+  color: white;
+}
+
+.link-row {
+  display: flex;
+  gap: 8px;
+}
+
+.link-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.journey-card {
+  background: #f1f7f5;
+  border: 1px solid #1e6f5c;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+}
+
+.journey-card .warn {
+  color: #b45309;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
