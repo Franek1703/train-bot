@@ -11,6 +11,11 @@ interface BookingExpectation {
 }
 
 const months = ['stycznia', 'lutego', 'marca', 'kwietnia', 'maja', 'czerwca', 'lipca', 'sierpnia', 'września', 'października', 'listopada', 'grudnia'];
+// Intercity prints single-digit days zero-padded ("06 listopada"), so the leading zero must be optional.
+export function mentionsTravelDate(text: string, date: Date): boolean {
+  return new RegExp(`\\b0?${date.getUTCDate()}\\s+${months[date.getUTCMonth()]}`, 'i').test(text);
+}
+
 function stationText(text: string): string {
   return text.toLocaleLowerCase('pl-PL').normalize('NFD').replace(/\p{M}/gu, '').replace(/ł/g, 'l')
     .replace(/glown[yae]/g, 'gl').replace(/zachodni[ae]/g, 'zach')
@@ -71,7 +76,7 @@ export class IntercityPaymentPage implements PurchasePage {
       ['Godzina odjazdu', !departureTime || text.includes(departureTime)],
       ['Klasa', new RegExp(`\\b${travelClass}\\s+klasa`, 'i').test(text)],
       ['Liczba pasażerów', new RegExp(`\\b${passengers}\\s+pasażer`, 'i').test(text)],
-      ['Data podróży', !this.expected.travelDate || new RegExp(`\\b${this.expected.travelDate.getUTCDate()}\\s+${months[this.expected.travelDate.getUTCMonth()]}`, 'i').test(text)],
+      ['Data podróży', !this.expected.travelDate || mentionsTravelDate(text, this.expected.travelDate)],
       ['Stacja początkowa', !this.expected.origin || stationText(text).includes(stationText(this.expected.origin))],
       ['Stacja docelowa', !this.expected.destination || stationText(text).includes(stationText(this.expected.destination))],
     ];
@@ -211,6 +216,7 @@ export class IntercityPaymentPage implements PurchasePage {
     const date = this.expected.travelDate;
     const dates = date ? [
       `${date.getUTCDate()} ${months[date.getUTCMonth()]}`,
+      `${String(date.getUTCDate()).padStart(2, '0')} ${months[date.getUTCMonth()]}`,
       date.toISOString().slice(0, 10),
       `${String(date.getUTCDate()).padStart(2, '0')}.${String(date.getUTCMonth() + 1).padStart(2, '0')}.${date.getUTCFullYear()}`,
     ] : [];
