@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AlertTriangle, Pause, Play, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import {
@@ -47,6 +47,7 @@ function App() {
   const [editingId, setEditingId] = useState<string>();
   const [addMode, setAddMode] = useState<AddMode>('link');
   const [incoming, setIncoming] = useState<IncomingJourney | undefined>();
+  const detailRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const onHash = () => {
@@ -101,6 +102,13 @@ function App() {
     setWatches(nextWatches);
     setErrors(nextErrors);
     setSelectedWatchId((current) => current ?? nextWatches[0]?.id);
+  }
+
+  function selectWatch(watchId: string) {
+    setSelectedWatchId(watchId);
+    if (window.matchMedia('(max-width: 700px)').matches) {
+      detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   }
 
   async function submitForm(event: React.FormEvent) {
@@ -223,7 +231,7 @@ function App() {
 
         {view === 'watches' ? (
           <div className="workbench">
-            <section className="panel">
+            <section className="panel add-panel">
               {!editingId && (
                 <div className="mode-tabs" role="tablist" aria-label="Sposób dodania">
                   <button type="button" role="tab" aria-selected={addMode === 'link'} className={addMode === 'link' ? 'active' : ''} onClick={() => setAddMode('link')}>Z linku podróży</button>
@@ -265,7 +273,7 @@ function App() {
 
             <section className="panel list-panel">
               {watches.map((watch) => (
-                <button key={watch.id} className={`watch-row ${selectedWatchId === watch.id ? 'selected' : ''}`} onClick={() => setSelectedWatchId(watch.id)}>
+                <button key={watch.id} className={`watch-row ${selectedWatchId === watch.id ? 'selected' : ''}`} onClick={() => selectWatch(watch.id)}>
                   <span>{watch.trainNumber ?? 'Train'}{watch.trainName ? ` ${watch.trainName}` : ''} {watch.departureTime ?? ''}{watch.arrivalTime ? ` → ${watch.arrivalTime}` : ''}</span>
                   <small>{watch.origin} to {watch.destination}</small>
                   <strong className={watch.active ? 'ok' : 'muted'}>{watch.active ? 'Active' : 'Stopped'} · {watch.lastKnownStatus ?? 'New'}</strong>
@@ -273,7 +281,7 @@ function App() {
               ))}
             </section>
 
-            <section className="panel detail-panel">
+            <section className="panel detail-panel" ref={detailRef}>
               {selectedListWatch && (
                 <>
                   <div className="detail-header">

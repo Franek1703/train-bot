@@ -102,7 +102,7 @@ export function JourneyLinkForm({ busy, onCreate, incoming }: Props) {
   return (
     <form onSubmit={(event) => void approve(event)} className="watch-form">
       <h3>Add watcher</h3>
-      <p className="muted">
+      <p className="muted bookmarklet-hint">
         Na stronie „Twoja podróż” kliknij zakładkę <a ref={bookmarkletRef} className="bookmarklet" onClick={(event) => event.preventDefault()}>➕ Train Bot</a>
         {' '}(przeciągnij ją na pasek zakładek). Dokładny pociąg zostanie przesłany tutaj. Samo wklejenie linku też działa, ale link nie zawiera wybranego pociągu.
       </p>
