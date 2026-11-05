@@ -4,6 +4,7 @@ import type { Locator, Page } from 'playwright';
 import type { Watch } from '@prisma/client';
 import { env } from '../config/env.js';
 import { launchIntercityBrowser } from './browser.js';
+import { minutes, withSearchTime } from './journeyUrl.js';
 import { recordCheckLog } from '../scheduler/checkLogger.js';
 import { extractSeatAssignment, resultFromStatus } from './parser.js';
 import type { AvailabilityChecker, AvailabilityResult } from './types.js';
@@ -184,10 +185,17 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
   }
 }
 
+// The stored search URL's `time` is whatever the user searched at; the wanted train may be
+// hidden behind "PÓŹNIEJ". Start the list right before the train's departure instead.
+export function searchUrlFor(watch: Pick<Watch, 'journeyUrl' | 'departureTime'>): string {
+  return watch.departureTime ? withSearchTime(watch.journeyUrl!, watch.departureTime) : watch.journeyUrl!;
+}
+
 async function openSearchUrl(page: Page, watch: Watch): Promise<void> {
   logInfo('Opening Intercity search URL', {
     watchId: watch.id,
-    searchUrl: watch.journeyUrl,
+    searchUrl: searchUrlFor(watch),
+    storedSearchUrl: watch.journeyUrl,
   });
 
   const navigationError = await navigateToSearchUrl(page, watch);
@@ -224,7 +232,7 @@ async function selectConnection(page: Page, watch: Watch): Promise<string | unde
     `kup bilet.*${watch.departureTime.replace(':', '\\:')}`,
     'i',
   );
-  const buyButton = await findMatchingBuyButton(page, watch, departurePattern);
+  const buyButton = await findBuyButtonLoadingMore(page, watch, departurePattern);
   const buyButtonCount = buyButton ? 1 : 0;
 
   logInfo('Matching search result cards found', {
@@ -253,6 +261,48 @@ async function selectConnection(page: Page, watch: Watch): Promise<string | unde
   await waitForBookingStep(page, watch.id, 'class_or_journey');
 
   return listScreenshotPath;
+}
+
+const MAX_LOAD_MORE_CLICKS = 8;
+
+// Fallback when the train is outside the first page of results: press PÓŹNIEJ / WCZEŚNIEJ.
+export async function findBuyButtonLoadingMore(
+  page: Page,
+  watch: Pick<Watch, 'id' | 'trainNumber' | 'departureTime'>,
+  departurePattern: RegExp,
+): Promise<Locator | undefined> {
+  let button = await findMatchingBuyButton(page, watch as Watch, departurePattern);
+  if (button) return button;
+
+  const searchTime = new URL(page.url()).searchParams.get('time');
+  const direction = searchTime && minutes(watch.departureTime!) < minutes(searchTime) ? 'earlier' : 'later';
+
+  for (let click = 1; click <= MAX_LOAD_MORE_CLICKS && !button; click += 1) {
+    const loaded = await loadMoreResults(page, direction);
+    logInfo('Train not in the visible results; loaded more', { watchId: watch.id, direction, click, loaded });
+    if (!loaded) break;
+    button = await findMatchingBuyButton(page, watch as Watch, departurePattern);
+  }
+
+  return button;
+}
+
+async function loadMoreResults(page: Page, direction: 'later' | 'earlier'): Promise<boolean> {
+  const more = page.getByRole('button', { name: direction === 'later' ? /^później$/i : /^wcześniej$/i }).first();
+  if (!(await more.isVisible().catch(() => false))) return false;
+
+  const buyButtons = page.getByRole('button', { name: /kup bilet/i });
+  const before = await buyButtons.count();
+  await more.scrollIntoViewIfNeeded();
+  await more.click({ timeout: 10_000 });
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await page.waitForTimeout(500);
+    if ((await buyButtons.count()) !== before) {
+      await page.waitForTimeout(500);
+      return true;
+    }
+  }
+  return false;
 }
 
 async function findMatchingBuyButton(
@@ -656,7 +706,7 @@ async function findInput(page: Page, locators: Locator[]): Promise<Locator | und
 
 async function navigateToSearchUrl(page: Page, watch: Watch): Promise<string | undefined> {
   try {
-    await page.goto(watch.journeyUrl!, { waitUntil: 'commit', timeout: 45_000 });
+    await page.goto(searchUrlFor(watch), { waitUntil: 'commit', timeout: 45_000 });
     return undefined;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

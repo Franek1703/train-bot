@@ -6,6 +6,7 @@ import {
   parseTicketSummary,
   pickConnection,
   toDirectConnections,
+  withSearchTime,
   type RawConnection,
 } from '../src/checker/journeyUrl.js';
 import { journeyPreviewSchema, watchInputSchema } from '../src/api/watchSchemas.js';
@@ -126,5 +127,26 @@ describe('pinned train from the journey page', () => {
   it('accepts the pinned train in the preview request', () => {
     expect(journeyPreviewSchema.parse({ url: journeyUrl, train: { trainNumber: 'EIC 40', departureTime: '17:05' } }).train?.departureTime).toBe('17:05');
     expect(() => journeyPreviewSchema.parse({ url: journeyUrl, train: { trainNumber: 'EIC 40', departureTime: '5pm' } })).toThrow();
+  });
+});
+
+describe('withSearchTime', () => {
+  const search = 'https://ebilet.intercity.pl/wyszukiwanie?dwyj=2026-11-06&swyj=5100067&sprzy=5100081&time=15%3A36&przy=0&sprzez=&ticket100=1010&ticket50=&polbez=0';
+
+  it('starts the list one minute before the wanted departure, keeping the other params', () => {
+    expect(withSearchTime(search, '17:37')).toBe(search.replace('time=15%3A36', 'time=17%3A36'));
+    expect(withSearchTime(search, '08:00')).toContain('time=07%3A59');
+  });
+
+  it('clamps at midnight and adds time when missing', () => {
+    expect(withSearchTime(search, '00:00')).toContain('time=00%3A00');
+    expect(withSearchTime('https://ebilet.intercity.pl/wyszukiwanie?dwyj=2026-11-06&swyj=1&sprzy=2', '10:30')).toContain('time=10%3A29');
+  });
+
+  it('leaves foreign, non-search or malformed input untouched', () => {
+    for (const input of ['https://evil.example/wyszukiwanie?time=10%3A00', 'https://ebilet.intercity.pl/wybormiejsc?time=10%3A00', 'nope']) {
+      expect(withSearchTime(input, '17:37')).toBe(input);
+    }
+    expect(withSearchTime(search, 'later')).toBe(search);
   });
 });

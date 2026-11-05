@@ -92,3 +92,7 @@ Pasting a bare URL still works but only guesses the train (departure one minute
 after `time`) and shows the day's connections to choose from. Check a link
 without the dashboard: `npm run preview:once -- "<url>"`. Transfers are not
 supported. The bot itself still runs the normal search → select → journey flow.
+Before opening the stored search URL it sets `time` to one minute before the
+watcher's `departureTime`, so the train is the first result (Intercity otherwise
+hides later trains behind **PÓŹNIEJ**). If the train still is not visible, the bot
+presses **PÓŹNIEJ**/**WCZEŚNIEJ** (up to 8 times) before failing.

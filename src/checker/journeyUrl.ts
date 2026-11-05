@@ -162,3 +162,22 @@ export function findPinnedConnection(connections: DirectConnection[], pin: Pinne
     connection.departureTime === pin.departureTime &&
     digits(connection.trainNumber) === wanted);
 }
+
+// --- Search URL time ---
+
+// Intercity lists results starting at the URL's `time`; later trains hide behind "PÓŹNIEJ".
+// Starting one minute before the wanted departure puts that train first in the list.
+export function withSearchTime(searchUrl: string, departureTime: string): string {
+  let url: URL;
+  try {
+    url = new URL(searchUrl);
+  } catch {
+    return searchUrl;
+  }
+  if (url.origin !== INTERCITY_ORIGIN || url.pathname.replace(/\/+$/, '') !== '/wyszukiwanie' || !/^\d{2}:\d{2}$/.test(departureTime)) {
+    return searchUrl;
+  }
+  const start = Math.max(0, minutes(departureTime) - 1);
+  url.searchParams.set('time', `${String(Math.floor(start / 60)).padStart(2, '0')}:${String(start % 60).padStart(2, '0')}`);
+  return url.toString();
+}
