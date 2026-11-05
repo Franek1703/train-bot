@@ -17,10 +17,12 @@ import {
   setWatchActive,
   updateWatch,
 } from '../watches/watchRepository.js';
-import { watchInputSchema, watchUpdateSchema } from './watchSchemas.js';
+import { journeyPreviewSchema, watchInputSchema, watchUpdateSchema } from './watchSchemas.js';
 import { latestPurchase, reviewUnknownPurchase } from '../purchases/purchaseRepository.js';
 import { purchaseManager } from '../purchases/index.js';
 import { PurchaseError } from '../purchases/types.js';
+import { JourneyUrlError } from '../checker/journeyUrl.js';
+import { previewJourney } from '../checker/journeyPreview.js';
 
 export const blikInputSchema = z.object({
   code: z.string().regex(/^\d{6}$/, 'Kod BLIK musi mieć 6 cyfr.'),
@@ -93,6 +95,13 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
 
   if (request.method === 'GET' && url.pathname === '/health') {
     sendJson(response, 200, { ok: true });
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/journeys/preview') {
+    assertDashboardOrigin(request);
+    const { url: journeyUrl, train } = journeyPreviewSchema.parse(await readJson(request));
+    sendJson(response, 200, { preview: await previewJourney(journeyUrl, train) });
     return;
   }
 
@@ -339,7 +348,7 @@ process.on('unhandledRejection', (error) => {
 });
 
 export function normalizeApiError(error: unknown): { status: number; message: string } {
-  if (error instanceof PurchaseError) return { status: error.status, message: error.message };
+  if (error instanceof PurchaseError || error instanceof JourneyUrlError) return { status: error.status, message: error.message };
   if (error instanceof ZodError) {
     return { status: 400, message: error.issues.map((issue) => issue.message).join('; ') };
   }

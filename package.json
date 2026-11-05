@@ -13,6 +13,7 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "check:once": "tsx src/checkOnce.ts",
+    "preview:once": "tsx src/previewOnce.ts",
     "notify:test": "tsx src/notifyTest.ts",
     "postinstall": "playwright install firefox chromium",
     "prisma:generate": "prisma generate"

@@ -51,6 +51,7 @@ Default: `http://localhost:3001`. The API is private and has no user login.
 | Method | Route | Purpose |
 | --- | --- | --- |
 | GET | `/health` | Process health |
+| POST | `/journeys/preview` | Body `{ url, train? }` (ebilet.intercity.pl `/wybormiejsc` or `/wyszukiwanie`; optional `train: { trainNumber, departureTime, date? }` pins the exact train read by the dashboard bookmarklet). Opens the derived search URL as a guest and returns the train, times, stations, ticket label, prices and alternatives for approval |
 | GET / POST | `/watches` | List/create watchers |
 | GET / PATCH / DELETE | `/watches/:id` | Details/update/delete |
 | POST | `/watches/:id/stop` | Stop monitoring |

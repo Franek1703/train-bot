@@ -81,7 +81,7 @@ export function PurchasePanel({ watch, onAccountState }: {
       {!purchase ? <p>Po znalezieniu miejsca bot przygotuje płatność i wyśle mail z linkiem tutaj.</p> : <>
         <p role="status"><strong>{labels[purchase.state]}</strong></p>
         <dl>
-          <dt>Podróż</dt><dd>{watch.travelDate.slice(0, 10)} · {watch.departureTime} · klasa {watch.travelClass}</dd>
+          <dt>Podróż</dt><dd>{watch.travelDate.slice(0, 10)} · {watch.departureTime}{watch.arrivalTime ? ` → ${watch.arrivalTime}` : ''} · klasa {watch.travelClass}</dd>
           <dt>Podróżny</dt><dd>{purchase.passengerName ?? '—'}</dd>
           <dt>Miejsce</dt><dd>{purchase.seatAssignment}</dd>
           <dt>Do zapłaty</dt><dd>{purchase.price ?? '—'}</dd>

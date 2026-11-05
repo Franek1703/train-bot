@@ -71,3 +71,28 @@ Mode defaults to `notify`. BLIK uses `blik`, requires `purchaseConsent: true`
 and uses account passenger data. Optional `notificationTarget` overrides
 `EMAIL_TO`. Class must be 1 or 2, passenger count 1–9 and interval at least two
 minutes. Search URL passengers/discounts must match the desired journey.
+Optional `arrivalTime` (`HH:mm`), `trainName` and `ticketLabel` are display
+details filled in by the dashboard's link flow.
+
+### Adding a watcher from a journey link
+
+A "Twoja podróż" URL does **not** identify the train: its `time` parameter is
+the time of the search, so several trains picked from one search share a URL.
+The chosen train lives only in that tab's `sessionStorage`
+(`choiceOfPlacesInitialData`). The dashboard's **Z linku podróży** tab therefore
+offers a bookmarklet, **➕ Train Bot** (drag it to the bookmarks bar). Clicking
+it on the journey page sends the URL plus the exact train (category, number,
+departure time, date) to the dashboard in the URL hash. The backend rewrites the
+URL to `/wyszukiwanie` with whitelisted parameters, loads the day's connections
+as a guest (about 8–13 s), confirms the train exists in that list, and the card
+shows route, times, train, ticket label and prices for approval (**Zatwierdź**).
+If the train is not in the list the request fails with a clear message.
+
+Pasting a bare URL still works but only guesses the train (departure one minute
+after `time`) and shows the day's connections to choose from. Check a link
+without the dashboard: `npm run preview:once -- "<url>"`. Transfers are not
+supported. The bot itself still runs the normal search → select → journey flow.
+Before opening the stored search URL it sets `time` to one minute before the
+watcher's `departureTime`, so the train is the first result (Intercity otherwise
+hides later trains behind **PÓŹNIEJ**). If the train still is not visible, the bot
+presses **PÓŹNIEJ**/**WCZEŚNIEJ** (up to 8 times) before failing.

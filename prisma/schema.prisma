@@ -16,6 +16,9 @@ model Watch {
   travelDate           DateTime            @map("travel_date") @db.Date
   trainNumber          String?             @map("train_number")
   departureTime        String?             @map("departure_time")
+  arrivalTime          String?             @map("arrival_time")
+  trainName            String?             @map("train_name")
+  ticketLabel          String?             @map("ticket_label")
   travelClass          Int                 @default(2) @map("travel_class")
   passengers           Int                 @default(1)
   seatRequired         Boolean             @default(true) @map("seat_required")

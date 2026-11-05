@@ -8,6 +8,9 @@ export interface Watch {
   travelDate: string;
   trainNumber?: string;
   departureTime?: string;
+  arrivalTime?: string;
+  trainName?: string;
+  ticketLabel?: string;
   travelClass: number;
   passengers: number;
   seatRequired: boolean;
@@ -61,6 +64,9 @@ export interface WatchInput {
   date: string;
   trainNumber?: string;
   departureTime?: string;
+  arrivalTime?: string;
+  trainName?: string;
+  ticketLabel?: string;
   travelClass: number;
   passengers: number;
   seatRequired: boolean;
@@ -69,6 +75,33 @@ export interface WatchInput {
   notificationTarget?: string;
   purchaseMode: 'notify' | 'blik';
   purchaseConsent: boolean;
+}
+
+export interface JourneyConnection {
+  connectionId: number;
+  trainNumber: string;
+  trainName?: string;
+  date: string;
+  departureTime: string;
+  arrivalTime: string;
+  prices: Array<{ travelClass: number; price: number; note?: string }>;
+}
+
+export interface JourneyPreview {
+  searchUrl: string;
+  origin: string;
+  destination: string;
+  date: string;
+  passengers?: number;
+  ticketLabel?: string;
+  confidence: 'exact' | 'guess';
+  selected: JourneyConnection;
+  alternatives: JourneyConnection[];
+}
+
+export async function previewJourney(url: string, train?: { trainNumber: string; departureTime: string; date?: string }): Promise<JourneyPreview> {
+  const { preview } = await apiSend<{ preview: JourneyPreview }>('/journeys/preview', 'POST', { url, train });
+  return preview;
 }
 
 export interface PurchaseSession {

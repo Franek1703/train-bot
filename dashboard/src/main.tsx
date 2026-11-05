@@ -13,9 +13,12 @@ import {
 import './styles.css';
 import { PurchasePanel } from './PurchasePanel';
 import { RemotePurchaseView } from './RemoteBrowser';
+import { JourneyLinkForm } from './JourneyLinkForm';
+import { readIncomingJourney, type IncomingJourney } from './bookmarklet';
 import type { PurchaseSession } from './api';
 
 type View = 'watches' | 'errors';
+type AddMode = 'link' | 'manual';
 
 const emptyForm: WatchInput = {
   searchUrl: '',
@@ -42,6 +45,23 @@ function App() {
   const [selectedWatch, setSelectedWatch] = useState<WatchDetails>();
   const [form, setForm] = useState<WatchInput>(emptyForm);
   const [editingId, setEditingId] = useState<string>();
+  const [addMode, setAddMode] = useState<AddMode>('link');
+  const [incoming, setIncoming] = useState<IncomingJourney | undefined>();
+
+  useEffect(() => {
+    const onHash = () => {
+      const journey = readIncomingJourney(window.location.hash);
+      if (!journey) return;
+      setView('watches');
+      setEditingId(undefined);
+      setAddMode('link');
+      setIncoming(journey);
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    };
+    onHash();
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [account, setAccount] = useState<{ busy: boolean; state?: PurchaseSession['state'] }>({ busy: false });
@@ -108,6 +128,12 @@ function App() {
     }
   }
 
+  async function createFromLink(payload: WatchInput) {
+    await apiSend('/watches', 'POST', payload);
+    setNotice('Watcher added.');
+    await refresh();
+  }
+
   async function action(path: string, message: string) {
     let body: { acknowledgeUnknown: boolean } | undefined;
     if (path.endsWith('/resume') && account.state === 'UNKNOWN') {
@@ -147,6 +173,7 @@ function App() {
 
   function editWatch(watch: Watch) {
     setEditingId(watch.id);
+    setAddMode('manual');
     setForm({
       searchUrl: watch.journeyUrl ?? '',
       origin: watch.origin,
@@ -154,6 +181,9 @@ function App() {
       date: watch.travelDate.slice(0, 10),
       trainNumber: watch.trainNumber ?? '',
       departureTime: watch.departureTime ?? '',
+      arrivalTime: watch.arrivalTime,
+      trainName: watch.trainName,
+      ticketLabel: watch.ticketLabel,
       travelClass: watch.travelClass,
       passengers: watch.passengers,
       seatRequired: watch.seatRequired,
@@ -194,6 +224,13 @@ function App() {
         {view === 'watches' ? (
           <div className="workbench">
             <section className="panel">
+              {!editingId && (
+                <div className="mode-tabs" role="tablist" aria-label="Sposób dodania">
+                  <button type="button" role="tab" aria-selected={addMode === 'link'} className={addMode === 'link' ? 'active' : ''} onClick={() => setAddMode('link')}>Z linku podróży</button>
+                  <button type="button" role="tab" aria-selected={addMode === 'manual'} className={addMode === 'manual' ? 'active' : ''} onClick={() => setAddMode('manual')}>Ręcznie</button>
+                </div>
+              )}
+              {addMode === 'link' && !editingId ? <JourneyLinkForm busy={busy} onCreate={createFromLink} incoming={incoming} /> : (
               <form onSubmit={(event) => void submitForm(event)} className="watch-form">
                 <h3>{editingId ? 'Edit watcher' : 'Add watcher'}</h3>
                 <input placeholder="Search URL" value={form.searchUrl} onChange={(event) => setForm({ ...form, searchUrl: event.target.value })} required />
@@ -223,12 +260,13 @@ function App() {
                   {editingId && <button type="button" onClick={() => { setEditingId(undefined); setForm(emptyForm); }}>Cancel</button>}
                 </div>
               </form>
+              )}
             </section>
 
             <section className="panel list-panel">
               {watches.map((watch) => (
                 <button key={watch.id} className={`watch-row ${selectedWatchId === watch.id ? 'selected' : ''}`} onClick={() => setSelectedWatchId(watch.id)}>
-                  <span>{watch.trainNumber ?? 'Train'} {watch.departureTime ?? ''}</span>
+                  <span>{watch.trainNumber ?? 'Train'}{watch.trainName ? ` ${watch.trainName}` : ''} {watch.departureTime ?? ''}{watch.arrivalTime ? ` → ${watch.arrivalTime}` : ''}</span>
                   <small>{watch.origin} to {watch.destination}</small>
                   <strong className={watch.active ? 'ok' : 'muted'}>{watch.active ? 'Active' : 'Stopped'} · {watch.lastKnownStatus ?? 'New'}</strong>
                 </button>

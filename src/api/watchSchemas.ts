@@ -20,6 +20,19 @@ export const watchInputSchema = z.object({
   notificationTarget: z.string().email().optional(),
   purchaseMode: z.enum(['notify', 'blik']).default('notify'),
   purchaseConsent: z.boolean().default(false),
+  arrivalTime: timeSchema.optional(),
+  trainName: z.string().min(1).max(100).optional(),
+  ticketLabel: z.string().min(1).max(200).optional(),
+});
+
+export const journeyPreviewSchema = z.object({
+  url: z.string().min(1).max(2_000),
+  // Exact train read from the journey page itself (dashboard bookmarklet).
+  train: z.object({
+    trainNumber: z.string().min(1).max(30),
+    departureTime: timeSchema,
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  }).optional(),
 });
 
 export const watchUpdateSchema = watchInputSchema.partial();
