@@ -99,8 +99,8 @@ export interface JourneyPreview {
   alternatives: JourneyConnection[];
 }
 
-export async function previewJourney(url: string): Promise<JourneyPreview> {
-  const { preview } = await apiSend<{ preview: JourneyPreview }>('/journeys/preview', 'POST', { url });
+export async function previewJourney(url: string, train?: { trainNumber: string; departureTime: string; date?: string }): Promise<JourneyPreview> {
+  const { preview } = await apiSend<{ preview: JourneyPreview }>('/journeys/preview', 'POST', { url, train });
   return preview;
 }
 

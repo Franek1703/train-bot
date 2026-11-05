@@ -319,3 +319,14 @@ main {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+.bookmarklet {
+  background: #1e6f5c;
+  border-radius: 6px;
+  color: white;
+  cursor: grab;
+  display: inline-block;
+  font-weight: 600;
+  padding: 2px 8px;
+  text-decoration: none;
+}

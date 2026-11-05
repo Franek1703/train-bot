@@ -14,6 +14,7 @@ import './styles.css';
 import { PurchasePanel } from './PurchasePanel';
 import { RemotePurchaseView } from './RemoteBrowser';
 import { JourneyLinkForm } from './JourneyLinkForm';
+import { readIncomingJourney, type IncomingJourney } from './bookmarklet';
 import type { PurchaseSession } from './api';
 
 type View = 'watches' | 'errors';
@@ -45,6 +46,22 @@ function App() {
   const [form, setForm] = useState<WatchInput>(emptyForm);
   const [editingId, setEditingId] = useState<string>();
   const [addMode, setAddMode] = useState<AddMode>('link');
+  const [incoming, setIncoming] = useState<IncomingJourney | undefined>();
+
+  useEffect(() => {
+    const onHash = () => {
+      const journey = readIncomingJourney(window.location.hash);
+      if (!journey) return;
+      setView('watches');
+      setEditingId(undefined);
+      setAddMode('link');
+      setIncoming(journey);
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    };
+    onHash();
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [account, setAccount] = useState<{ busy: boolean; state?: PurchaseSession['state'] }>({ busy: false });
@@ -213,7 +230,7 @@ function App() {
                   <button type="button" role="tab" aria-selected={addMode === 'manual'} className={addMode === 'manual' ? 'active' : ''} onClick={() => setAddMode('manual')}>Ręcznie</button>
                 </div>
               )}
-              {addMode === 'link' && !editingId ? <JourneyLinkForm busy={busy} onCreate={createFromLink} /> : (
+              {addMode === 'link' && !editingId ? <JourneyLinkForm busy={busy} onCreate={createFromLink} incoming={incoming} /> : (
               <form onSubmit={(event) => void submitForm(event)} className="watch-form">
                 <h3>{editingId ? 'Edit watcher' : 'Add watcher'}</h3>
                 <input placeholder="Search URL" value={form.searchUrl} onChange={(event) => setForm({ ...form, searchUrl: event.target.value })} required />

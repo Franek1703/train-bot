@@ -1,16 +1,18 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, Loader2, Search } from 'lucide-react';
+import { buildBookmarklet, type IncomingJourney } from './bookmarklet';
 import { previewJourney, type JourneyConnection, type JourneyPreview, type WatchInput } from './api';
 
 interface Props {
   busy: boolean;
   onCreate: (payload: WatchInput) => Promise<void>;
+  incoming?: IncomingJourney;
 }
 
 const formatPrice = (price: number) => `${price.toFixed(2).replace('.', ',')} zł`;
 const formatDate = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString('pl-PL', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
 
-export function JourneyLinkForm({ busy, onCreate }: Props) {
+export function JourneyLinkForm({ busy, onCreate, incoming }: Props) {
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -27,20 +29,36 @@ export function JourneyLinkForm({ busy, onCreate }: Props) {
     ? preview.alternatives.find((item) => item.connectionId === connectionId) ?? preview.selected
     : undefined;
 
-  async function load(value: string) {
+  const latestRequest = useRef(0);
+  const bookmarkletRef = useRef<HTMLAnchorElement>(null);
+  const bookmarklet = buildBookmarklet(window.location.origin);
+  // React blocks javascript: hrefs in JSX, so the bookmarklet link is set on the element directly.
+  useEffect(() => { bookmarkletRef.current?.setAttribute('href', bookmarklet); }, [bookmarklet]);
+
+  useEffect(() => {
+    if (!incoming) return;
+    setUrl(incoming.url);
+    void load(incoming.url, incoming.train);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incoming]);
+
+  async function load(value: string, train?: IncomingJourney['train']) {
     const trimmed = value.trim();
     if (!trimmed) return;
+    const requestId = ++latestRequest.current;
     setLoading(true);
     setError('');
     setPreview(undefined);
     try {
-      const result = await previewJourney(trimmed);
+      const result = await previewJourney(trimmed, train);
+      if (requestId !== latestRequest.current) return;
       setPreview(result);
       setConnectionId(result.selected.connectionId);
     } catch (reason) {
+      if (requestId !== latestRequest.current) return;
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
-      setLoading(false);
+      if (requestId === latestRequest.current) setLoading(false);
     }
   }
 
@@ -84,7 +102,10 @@ export function JourneyLinkForm({ busy, onCreate }: Props) {
   return (
     <form onSubmit={(event) => void approve(event)} className="watch-form">
       <h3>Add watcher</h3>
-      <p className="muted">Wklej link ze strony „Twoja podróż” (ebilet.intercity.pl/wybormiejsc…). Dane pociągu wczytamy automatycznie.</p>
+      <p className="muted">
+        Na stronie „Twoja podróż” kliknij zakładkę <a ref={bookmarkletRef} className="bookmarklet" onClick={(event) => event.preventDefault()}>➕ Train Bot</a>
+        {' '}(przeciągnij ją na pasek zakładek). Dokładny pociąg zostanie przesłany tutaj. Samo wklejenie linku też działa, ale link nie zawiera wybranego pociągu.
+      </p>
       <div className="link-row">
         <input
           placeholder="https://ebilet.intercity.pl/wybormiejsc?dwyj=…"

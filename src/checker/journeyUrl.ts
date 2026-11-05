@@ -145,3 +145,20 @@ export function parseTicketSummary(bodyText: string): { passengers?: number; tic
   if (!match) return {};
   return { passengers: Number(match[1]), ticketLabel: match[2]!.replace(/^\d+x\s+/, '').trim() || undefined };
 }
+
+// --- Pinned train (read by the dashboard bookmarklet from the journey page's sessionStorage) ---
+
+export interface PinnedTrain {
+  trainNumber: string; // "EIC 40" (category optional when matching)
+  departureTime: string; // HH:mm
+  date?: string; // YYYY-MM-DD
+}
+
+export function findPinnedConnection(connections: DirectConnection[], pin: PinnedTrain, searchDate: string): DirectConnection | undefined {
+  const digits = (value: string) => value.replace(/\D+/g, '');
+  const wanted = digits(pin.trainNumber);
+  return connections.find((connection) =>
+    connection.date === (pin.date ?? searchDate) &&
+    connection.departureTime === pin.departureTime &&
+    digits(connection.trainNumber) === wanted);
+}

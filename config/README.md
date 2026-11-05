@@ -76,13 +76,19 @@ details filled in by the dashboard's link flow.
 
 ### Adding a watcher from a journey link
 
-The dashboard's default **Z linku podróży** tab accepts the URL of Intercity's
-"Twoja podróż" page (`https://ebilet.intercity.pl/wybormiejsc?dwyj=…`). That
-page does not identify the train when opened in a fresh session, so the backend
-rewrites it to `/wyszukiwanie` with the same whitelisted parameters, loads the
-result list as a guest (about 10 s) and selects the train departing one minute
-after `time` (the way Intercity builds that URL). When the match is uncertain,
-the dashboard asks you to choose from the day's direct connections. After
-**Zatwierdź** the watcher is created with the derived search URL; the bot still
-runs the normal search → select → journey flow. Check a link without the
-dashboard: `npm run preview:once -- "<url>"`. Transfers are not supported.
+A "Twoja podróż" URL does **not** identify the train: its `time` parameter is
+the time of the search, so several trains picked from one search share a URL.
+The chosen train lives only in that tab's `sessionStorage`
+(`choiceOfPlacesInitialData`). The dashboard's **Z linku podróży** tab therefore
+offers a bookmarklet, **➕ Train Bot** (drag it to the bookmarks bar). Clicking
+it on the journey page sends the URL plus the exact train (category, number,
+departure time, date) to the dashboard in the URL hash. The backend rewrites the
+URL to `/wyszukiwanie` with whitelisted parameters, loads the day's connections
+as a guest (about 8–13 s), confirms the train exists in that list, and the card
+shows route, times, train, ticket label and prices for approval (**Zatwierdź**).
+If the train is not in the list the request fails with a clear message.
+
+Pasting a bare URL still works but only guesses the train (departure one minute
+after `time`) and shows the day's connections to choose from. Check a link
+without the dashboard: `npm run preview:once -- "<url>"`. Transfers are not
+supported. The bot itself still runs the normal search → select → journey flow.

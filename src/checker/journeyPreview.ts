@@ -3,6 +3,8 @@ import { env } from '../config/env.js';
 import { launchIntercityBrowser } from './browser.js';
 import {
   JourneyUrlError,
+  findPinnedConnection,
+  type PinnedTrain,
   parseJourneyUrl,
   parseTicketSummary,
   pickConnection,
@@ -39,7 +41,7 @@ interface PriceEntry { idPolaczenia: number; ceny: Array<{ klasa: number; cena: 
 const PREVIEW_TIMEOUT_MS = 45_000;
 let previewRunning = false;
 
-export async function previewJourney(input: string): Promise<JourneyPreview> {
+export async function previewJourney(input: string, pin?: PinnedTrain): Promise<JourneyPreview> {
   const parsed = parseJourneyUrl(input);
   if (new Date(`${parsed.date}T23:59:59`).getTime() < Date.now()) {
     throw new JourneyUrlError('Data podróży jest już w przeszłości.');
@@ -88,7 +90,11 @@ export async function previewJourney(input: string): Promise<JourneyPreview> {
       prices: (prices.get(connection.connectionId) ?? []).map((entry) => ({ travelClass: entry.klasa, price: entry.cena / 100, note: entry.komunikatTekst?.trim() || undefined })),
     });
 
-    const picked = pickConnection(direct, parsed.time);
+    const pinned = pin ? findPinnedConnection(direct, pin, parsed.date) : undefined;
+    if (pin && !pinned) {
+      throw new JourneyUrlError(`Pociągu ${pin.trainNumber} o ${pin.departureTime} nie ma na liście połączeń Intercity dla tej trasy i daty.`, 404);
+    }
+    const picked = pinned ? { connection: pinned, confidence: 'exact' as const } : pickConnection(direct, parsed.time);
     const alternatives = direct.filter((connection) => connection.date === parsed.date).map(withPrices);
     console.log(JSON.stringify({ level: 'info', message: 'Journey preview finished', confidence: picked.confidence, connections: direct.length, durationMs: Date.now() - startedAt }));
 

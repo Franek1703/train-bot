@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   JourneyUrlError,
   parseJourneyUrl,
+  findPinnedConnection,
   parseTicketSummary,
   pickConnection,
   toDirectConnections,
@@ -102,5 +103,28 @@ describe('API schemas for the journey flow', () => {
       ticketLabel: '51% Studenci do 26 lat', travelClass: 2, passengers: 1,
     });
     expect(parsed).toMatchObject({ arrivalTime: '18:50', trainName: 'Zielonogórzanin' });
+  });
+});
+
+describe('pinned train from the journey page', () => {
+  const connections = toDirectConnections([
+    connection(1, 2704, 'IC', '15:37', '18:50'),
+    connection(2, 40, 'EIC', '17:05', '19:24'),
+  ]);
+
+  it('matches by train number digits and departure time, regardless of category text', () => {
+    expect(findPinnedConnection(connections, { trainNumber: 'EIC 40', departureTime: '17:05' }, '2026-11-06')?.connectionId).toBe(2);
+    expect(findPinnedConnection(connections, { trainNumber: '2704', departureTime: '15:37', date: '2026-11-06' }, '2026-11-06')?.connectionId).toBe(1);
+  });
+
+  it('does not match another time, another date or another number', () => {
+    expect(findPinnedConnection(connections, { trainNumber: 'EIC 40', departureTime: '17:06' }, '2026-11-06')).toBeUndefined();
+    expect(findPinnedConnection(connections, { trainNumber: 'EIC 40', departureTime: '17:05', date: '2026-11-07' }, '2026-11-06')).toBeUndefined();
+    expect(findPinnedConnection(connections, { trainNumber: 'IC 4', departureTime: '17:05' }, '2026-11-06')).toBeUndefined();
+  });
+
+  it('accepts the pinned train in the preview request', () => {
+    expect(journeyPreviewSchema.parse({ url: journeyUrl, train: { trainNumber: 'EIC 40', departureTime: '17:05' } }).train?.departureTime).toBe('17:05');
+    expect(() => journeyPreviewSchema.parse({ url: journeyUrl, train: { trainNumber: 'EIC 40', departureTime: '5pm' } })).toThrow();
   });
 });

@@ -100,8 +100,8 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
 
   if (request.method === 'POST' && url.pathname === '/journeys/preview') {
     assertDashboardOrigin(request);
-    const { url: journeyUrl } = journeyPreviewSchema.parse(await readJson(request));
-    sendJson(response, 200, { preview: await previewJourney(journeyUrl) });
+    const { url: journeyUrl, train } = journeyPreviewSchema.parse(await readJson(request));
+    sendJson(response, 200, { preview: await previewJourney(journeyUrl, train) });
     return;
   }
 
