@@ -1,4 +1,7 @@
+import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
 import type { Browser, Locator, Page } from 'playwright';
+import { env } from '../config/env.js';
 import { extractSeatAssignment } from '../checker/parser.js';
 import type { PaymentObservation, PurchasePage } from './types.js';
 import { PaymentNotSubmittedError, PurchasePreparationError } from './types.js';
@@ -227,8 +230,8 @@ export class IntercityPaymentPage implements PurchasePage {
   }
 
   private async deferredOrder(orderNumber?: string | null): Promise<{ container: Locator; button: Locator } | undefined> {
-    const buttons = this.page.getByRole('button', { name: /^zapłać(?:\s+teraz)?$/i })
-      .or(this.page.getByRole('link', { name: /^zapłać(?:\s+teraz)?$/i }));
+    const buttons = this.page.getByRole('button', { name: /^zapłać(?:\s+teraz)?(?:\s+[\d\s]+[,.]\d{2}\s*zł)?$/i })
+      .or(this.page.getByRole('link', { name: /^zapłać(?:\s+teraz)?(?:\s+[\d\s]+[,.]\d{2}\s*zł)?$/i }));
     const matches: Array<{ container: Locator; button: Locator }> = [];
     for (let i = 0; i < await buttons.count(); i++) {
       const button = buttons.nth(i);
@@ -240,8 +243,8 @@ export class IntercityPaymentPage implements PurchasePage {
         if (this.matchesDeferredOrder(text, orderNumber)) {
           if (await container.getByLabel(/kod blik/i).or(container.getByPlaceholder(/wpisz kod blik/i)).filter({ visible: true }).count()) break;
           // A page containing multiple orders is not an identifiable order card.
-          const payButtons = container.getByRole('button', { name: /^zapłać(?:\s+teraz)?$/i })
-            .or(container.getByRole('link', { name: /^zapłać(?:\s+teraz)?$/i }));
+          const payButtons = container.getByRole('button', { name: /^zapłać(?:\s+teraz)?(?:\s+[\d\s]+[,.]\d{2}\s*zł)?$/i })
+            .or(container.getByRole('link', { name: /^zapłać(?:\s+teraz)?(?:\s+[\d\s]+[,.]\d{2}\s*zł)?$/i }));
           if (await payButtons.count() === 1) matches.push({ container, button });
           break;
         }
@@ -265,23 +268,76 @@ export class IntercityPaymentPage implements PurchasePage {
     return { expiresAt: details.expiresAt };
   }
 
+  async canPay(): Promise<boolean> {
+    if (this.submitted) return false;
+    // Close a leftover "Zapłać później" modal so the code field is reachable.
+    if (await this.deferProceedButton().isVisible().catch(() => false)) await this.page.keyboard.press('Escape').catch(() => {});
+    return this.code.isVisible().catch(() => false);
+  }
+
+  private deferProceedButton(): Locator {
+    const name = /przejdź do oczekujących/i;
+    return this.page.getByRole('button', { name }).or(this.page.getByRole('link', { name })).filter({ visible: true }).first();
+  }
+
+  private async saveDiagnostic(label: string): Promise<void> {
+    // Watch id is available at runtime: the checker passes the full watch as the expectation.
+    const watchId = (this.expected as { id?: string } | undefined)?.id ?? 'purchase';
+    const dir = path.join(env.SCREENSHOTS_DIR, watchId);
+    const file = path.join(dir, `${label}-${Date.now()}.png`);
+    try {
+      await mkdir(dir, { recursive: true });
+      await this.page.screenshot({ path: file, fullPage: true });
+      const body = (await this.body().catch(() => '')).replace(/\s+/g, ' ').slice(0, 1500);
+      console.log(JSON.stringify({ level: 'info', message: 'Deferral diagnostic saved', label, screenshotPath: file, url: pageLink(this.page), bodyPreview: body }));
+    } catch {
+      console.error(JSON.stringify({ level: 'error', message: 'Could not save deferral diagnostic', label }));
+    }
+  }
+
+  // Resumable: a retry continues from the modal or from the pending-orders page.
   async defer() {
     if (this.submitted) return { confirmed: false };
     this.remote.invalidate();
-    const proceed = this.page.getByRole('button', { name: /^przejdź do oczekujących na płatność$/i });
-    if (!await proceed.isVisible().catch(() => false)) {
-      const button = this.page.getByRole('button', { name: /^zapłać później$/i });
-      if (!await button.isVisible().catch(() => false) || !await button.isEnabled()) return { confirmed: false };
-      await button.click();
+    try {
+      return await this.deferSteps();
+    } catch (error) {
+      await this.saveDiagnostic('defer-error');
+      throw error;
     }
-    await proceed.waitFor({ state: 'visible', timeout: 15_000 });
-    await proceed.click();
-    await proceed.waitFor({ state: 'hidden', timeout: 15_000 });
+  }
+
+  private async deferSteps() {
+    const proceed = this.deferProceedButton();
+    const pendingHeading = this.page.getByRole('heading', { name: /oczekując\w* na płatność/i }).filter({ visible: true }).first();
     // Confirm using an explicit result; disappearing buttons alone prove nothing.
-    const confirmation = this.page.getByText(/(?:zamówienie zostało zapisane|płatność została odroczona|zamówienie oczekuje na płatność|bilet oczekuje na (?:opłacenie|płatność))/i).first();
-    await confirmation.or(this.page.getByRole('heading', { name: /^oczekujące na płatność$/i })).first().waitFor({ state: 'visible', timeout: 15_000 });
+    const confirmation = this.page.getByText(/(?:zamówienie zostało zapisane|płatność została odroczona|zamówienie oczekuje na płatność|bilet oczekuje na (?:opłacenie|płatność))/i).filter({ visible: true }).first();
+    const alreadyPending = await pendingHeading.or(confirmation).first().isVisible().catch(() => false);
+    if (!alreadyPending) {
+      if (!await proceed.isVisible().catch(() => false)) {
+        const later = /^zapłać później$/i;
+        const button = this.page.getByRole('button', { name: later }).or(this.page.getByRole('link', { name: later }))
+          .filter({ visible: true }).first();
+        if (!await button.isVisible().catch(() => false) || !await button.isEnabled().catch(() => false)) {
+          await this.saveDiagnostic('defer-no-button');
+          return { confirmed: false };
+        }
+        await button.click();
+        await proceed.or(pendingHeading).or(confirmation).first().waitFor({ state: 'visible', timeout: 30_000 });
+      }
+      if (await proceed.isVisible().catch(() => false)) {
+        await proceed.click();
+        await proceed.waitFor({ state: 'hidden', timeout: 30_000 }).catch(() => {});
+      }
+      await confirmation.or(pendingHeading).first().waitFor({ state: 'visible', timeout: 30_000 });
+      // Pending orders load after the heading.
+      await this.page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
+    }
     const order = await this.deferredOrder();
-    if (!order && !await confirmation.isVisible()) return { confirmed: false };
+    if (!order && !await confirmation.isVisible()) {
+      await this.saveDiagnostic('defer-unconfirmed');
+      return { confirmed: false };
+    }
     const orderText = order ? await order.container.innerText() : '';
     const text = await this.body();
     return {

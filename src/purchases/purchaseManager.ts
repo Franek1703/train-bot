@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { PaymentNotSubmittedError, PurchasePreparationError, PurchaseError, codeDeadline, type PurchasePage, type PurchaseRecord, type PurchaseRepository, type PurchaseState, type RemoteAction } from './types.js';
 import { recordCheckLog } from '../scheduler/checkLogger.js';
 
-interface LivePurchase { record: PurchaseRecord; page: PurchasePage; operation: Promise<void> | null; waitingOperations: number }
+// deferFailed: "Zapłać później" was not confirmed; the reservation stays open for BLIK until shortly before expiry.
+interface LivePurchase { record: PurchaseRecord; page: PurchasePage; operation: Promise<void> | null; waitingOperations: number; deferFailed?: boolean }
 
 export class PurchaseManager {
   private live: LivePurchase | null = null;
@@ -213,7 +214,7 @@ export class PurchaseManager {
     catch {
       if (this.now().getTime() >= live.record.expiresAt.getTime() + 2 * 60_000) {
         await this.finish(live, 'UNKNOWN', 'Nie można potwierdzić wyniku. Sprawdź zamówienie na koncie Intercity.');
-      } else if (live.record.state === 'WAITING_FOR_BLIK' && !live.record.deferredAt && this.now() >= live.record.acceptCodeUntil) {
+      } else if (live.record.state === 'WAITING_FOR_BLIK' && !live.record.deferredAt && !live.deferFailed && this.now() >= live.record.acceptCodeUntil) {
         await this.defer(live).catch(() => this.finish(live, 'FAILED', 'Nie udało się potwierdzić odroczenia płatności.'));
       }
     } finally { if (live.operation === operation) live.operation = null; }
@@ -228,7 +229,7 @@ export class PurchaseManager {
     if (observation.expiresAt) {
       const expiresAt = new Date(Math.min(live.record.expiresAt.getTime(), observation.expiresAt.getTime()));
       live.record = await this.repository.update(live.record.id, {
-        expiresAt, acceptCodeUntil: new Date(Math.min(live.record.acceptCodeUntil.getTime(), expiresAt.getTime() - (live.record.deferredAt ? 30_000 : 3 * 60_000))),
+        expiresAt, acceptCodeUntil: new Date(Math.min(live.record.acceptCodeUntil.getTime(), expiresAt.getTime() - (live.record.deferredAt || live.deferFailed ? 30_000 : 3 * 60_000))),
       });
     }
     if (observation.outcome === 'paid') {
@@ -249,7 +250,7 @@ export class PurchaseManager {
       });
     }
     if (live.record.state === 'WAITING_FOR_BLIK' && this.now() >= live.record.acceptCodeUntil) {
-      if (!live.record.deferredAt) await this.defer(live);
+      if (!live.record.deferredAt && !live.deferFailed) await this.defer(live);
       else if (this.now() >= live.record.expiresAt) await this.finish(live, 'EXPIRED', 'Upłynął termin płatności odroczonego zamówienia.');
     } else if (live.record.state === 'WAITING_AFTER_DEFERRAL' && this.now() >= live.record.expiresAt) {
       await this.finish(live, 'EXPIRED', 'Upłynął termin płatności odroczonego zamówienia.');
@@ -264,7 +265,16 @@ export class PurchaseManager {
       await this.finish(live, 'EXPIRED', 'Upłynął czas rezerwacji.');
       return;
     }
-    const result = await live.page.defer();
+    if (live.deferFailed) {
+      await this.finish(live, 'FAILED', [failureReason, 'Intercity nie potwierdziło opcji „Zapłać później”.'].filter(Boolean).join(' '));
+      return;
+    }
+    let result: Awaited<ReturnType<PurchasePage['defer']>>;
+    try { result = await live.page.defer(); }
+    catch {
+      // The page flow is resumable: a second attempt continues from the modal or pending-orders page.
+      result = await live.page.defer().catch(() => ({ confirmed: false }));
+    }
     if (result.confirmed) {
       const expiresAt = result.expiresAt ?? live.record.expiresAt;
       live.record = await this.repository.update(live.record.id, {
@@ -278,6 +288,20 @@ export class PurchaseManager {
         this.emit(live.record);
       }
     } else {
+      const lastCodeAt = new Date(live.record.expiresAt.getTime() - 30_000);
+      if (!this.stopping && !failureReason && !unknownClock && this.now() < lastCodeAt
+        && await live.page.canPay?.().catch(() => false)) {
+        // Keep the seat: closing the browser here would discard minutes of the reservation.
+        live.deferFailed = true;
+        live.record = await this.repository.update(live.record.id, {
+          state: 'WAITING_FOR_BLIK', acceptCodeUntil: lastCodeAt,
+          errorMessage: 'Nie udało się odroczyć płatności. Rezerwacja jest nadal otwarta — podaj kod BLIK przed upływem terminu.',
+        });
+        console.log(JSON.stringify({ level: 'info', message: 'Deferral not confirmed; keeping reservation open for BLIK', purchaseId: live.record.id, acceptCodeUntil: lastCodeAt.toISOString() }));
+        live.page.remote?.invalidate();
+        this.emit(live.record);
+        return;
+      }
       await this.finish(live, 'FAILED', [failureReason, 'Intercity nie potwierdziło opcji „Zapłać później”.'].filter(Boolean).join(' '));
     }
   }

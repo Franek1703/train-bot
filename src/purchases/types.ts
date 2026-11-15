@@ -48,6 +48,8 @@ export interface PurchasePage {
   defer(): Promise<{ confirmed: boolean; intercityUrl?: string; orderNumber?: string; expiresAt?: Date }>;
   resumeDeferred?(orderNumber: string | null): Promise<{ expiresAt?: Date }>;
   readCode?(): Promise<string>;
+  // True when the checkout can still accept a BLIK code (used after a failed deferral).
+  canPay?(): Promise<boolean>;
   remote?: RemotePage;
   close(): Promise<void>;
 }

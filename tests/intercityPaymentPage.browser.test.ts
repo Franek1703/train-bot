@@ -194,6 +194,21 @@ describe('Intercity payment UI adapter', () => {
     expect(await pending.defer()).toEqual({ confirmed: false });
   });
 
+  it('resumes a deferral whose modal was already opened by an interrupted attempt', async () => {
+    const payment = adapter();
+    await payment.prepare();
+    await page.getByRole('button', { name: 'ZAPŁAĆ PÓŹNIEJ' }).click();
+    expect(await payment.defer()).toMatchObject({ confirmed: true, orderNumber: 'ORDER-1' });
+  });
+
+  it('reports the checkout as still payable when deferral is unavailable', async () => {
+    const payment = adapter();
+    await payment.prepare();
+    expect(await payment.canPay()).toBe(true);
+    await payment.submit('123456');
+    expect(await payment.canPay()).toBe(false);
+  });
+
   it('does not confirm deferral merely because the modal closes and a pending heading appears', async () => {
     const payment = adapter();
     await payment.prepare();
