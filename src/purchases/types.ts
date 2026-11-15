@@ -50,6 +50,8 @@ export interface PurchasePage {
   readCode?(): Promise<string>;
   // True when the checkout can still accept a BLIK code (used after a failed deferral).
   canPay?(): Promise<boolean>;
+  // Saves a screenshot and page text for an outcome the bot could not classify.
+  diagnose?(label: string): Promise<void>;
   remote?: RemotePage;
   close(): Promise<void>;
 }

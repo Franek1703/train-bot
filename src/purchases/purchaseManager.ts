@@ -307,6 +307,7 @@ export class PurchaseManager {
   }
 
   private async finish(live: LivePurchase, state: PurchaseState, errorMessage: string | null = null): Promise<void> {
+    if (state === 'UNKNOWN' || state === 'FAILED') await live.page.diagnose?.(`purchase-${state.toLowerCase()}`).catch(() => {});
     // Persist first. A DB outage keeps the gate closed instead of allowing a duplicate checkout.
     live.record = await this.repository.update(live.record.id, { state, errorMessage });
     try { await live.page.close().catch(() => console.error('Could not close completed purchase browser')); }

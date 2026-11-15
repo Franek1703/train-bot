@@ -34,6 +34,26 @@ beforeEach(() => {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
 describe('purchase emails', () => {
+  it('tells the user the bot released the session and the watcher can be resumed', async () => {
+    const expired = { ...session, state: 'EXPIRED' as const };
+    mocks.find.mockResolvedValue({ ...expired, watch });
+    await sendPurchaseNotification(expired);
+    const mail = mocks.send.mock.calls[0][0];
+    expect(mail.subject).toBe('Sesja zakończona — wznów watcher w dashboardzie · IC 8112');
+    expect(mail.text).toContain('Bot nie trzyma już tej sesji');
+    expect(mail.text).toContain('wznowić w dashboardzie');
+    expect(mail.text).toContain('https://dashboard.example/?watch=watch-1');
+  });
+
+  it('asks to check the Intercity account before resuming after an unknown payment result', async () => {
+    const unknown = { ...session, state: 'UNKNOWN' as const };
+    mocks.find.mockResolvedValue({ ...unknown, watch });
+    await sendPurchaseNotification(unknown);
+    const mail = mocks.send.mock.calls[0][0];
+    expect(mail.subject).toContain('Sprawdź zakup');
+    expect(mail.text).toContain('Moje bilety');
+  });
+
   it('links a deferred payment to the retained bot page with the actual deadline', async () => {
     const deferred = { ...session, state: 'WAITING_AFTER_DEFERRAL' as const };
     mocks.find.mockResolvedValue({ ...deferred, watch });

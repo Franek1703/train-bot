@@ -201,6 +201,43 @@ describe('Intercity payment UI adapter', () => {
     expect(await payment.defer()).toMatchObject({ confirmed: true, orderNumber: 'ORDER-1' });
   });
 
+  // Layout captured from Intercity on 2026-11-15: deferral lands on "Moje bilety".
+  const myTickets = `<h1>Moje bilety</h1><div id="list">
+    <div class="order"><div>Numer transakcji 122471239</div><div>Transakcja nieopłacona</div><div>Czas na zakup: 2:29</div>
+      <div>Data 11.10.2026</div><div>2h 55min 15:27 18:22</div><div>Klasa 2 33,81zł</div><div>Trasa Poznań Gł. Warszawa Zach. 8112</div>
+      <button>BLIK</button><button>PŁATNOŚĆ KARTĄ</button><button>PŁATNOŚĆ PRZELEW PAYU</button><button>ANULUJ TRANSAKCJĘ</button></div>
+    <div class="ticket"><div>Numer biletu WH72238533</div><div>Zakup: EIC2</div><div>Data 11.10.2026 Czas: 2h 14min 19:40 21:54</div>
+      <div>Klasa 2 73,01 zł</div><div>Trasa Poznań Gł. Warszawa Zach. 6110</div><button>POBIERZ PDF</button></div></div>`;
+
+  it('confirms a deferral that lands on "Moje bilety" as an unpaid transaction', async () => {
+    const payment = adapter();
+    await payment.prepare();
+    await page.getByRole('button', { name: 'PRZEJDŹ DO OCZEKUJĄCYCH NA PŁATNOŚĆ', includeHidden: true }).evaluate((node, body) => {
+      node.onclick = () => { document.body.innerHTML = body; };
+    }, myTickets);
+    const result = await payment.defer();
+    expect(result).toMatchObject({ confirmed: true, orderNumber: '122471239' });
+    expect((result as { expiresAt?: Date }).expiresAt).toBeInstanceOf(Date);
+  });
+
+  it('recognises the purchased ticket on "Moje bilety" after payment', async () => {
+    const payment = adapter();
+    await payment.prepare();
+    await payment.submit('123456');
+    const paid = myTickets.replace('Numer biletu WH72238533', 'Numer biletu WH00000001').replace('19:40 21:54', '15:27 18:22')
+      .replace('6110', '8112').replace(/<div class="order">[\s\S]*?ANULUJ TRANSAKCJĘ<\/button><\/div>/, '');
+    await page.locator('body').evaluate((node, body) => { node.innerHTML = body; }, paid);
+    expect(await payment.observe()).toMatchObject({ outcome: 'paid', orderNumber: 'WH00000001' });
+  });
+
+  it('does not treat another train\'s ticket as this purchase', async () => {
+    const payment = adapter();
+    await payment.prepare();
+    await payment.submit('123456');
+    await page.locator('body').evaluate((node, body) => { node.innerHTML = body; }, myTickets);
+    expect((await payment.observe()).outcome).toBe('pending');
+  });
+
   it('reports the checkout as still payable when deferral is unavailable', async () => {
     const payment = adapter();
     await payment.prepare();
