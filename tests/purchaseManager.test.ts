@@ -95,6 +95,47 @@ describe('BLIK purchase lifecycle', () => {
     expect(h.page.submit).not.toHaveBeenCalled();
   });
 
+  it('keeps the reservation open for BLIK when Intercity does not confirm the deferral', async () => {
+    const h = harness();
+    const page = { ...h.page, canPay: vi.fn(async () => true) };
+    page.defer.mockResolvedValue({ confirmed: false });
+    await h.manager.prepare('watch-1', 'seat', expiresAt, page);
+    vi.setSystemTime(new Date(start.getTime() + 12 * 60_000));
+    await h.manager.tick();
+    expect(page.defer).toHaveBeenCalledOnce();
+    expect(h.record()).toMatchObject({ state: 'WAITING_FOR_BLIK', acceptCodeUntil: new Date(expiresAt.getTime() - 30_000) });
+    expect(page.close).not.toHaveBeenCalled();
+    vi.setSystemTime(new Date(start.getTime() + 13 * 60_000));
+    await h.manager.tick();
+    expect(page.defer).toHaveBeenCalledOnce();
+    await h.manager.submit('purchase-1', '123456', 'late-but-valid');
+    expect(page.submit).toHaveBeenCalledWith('123456');
+    expect(h.record().state).toBe('PAYMENT_PENDING');
+  });
+
+  it('expires a reservation kept open after a failed deferral', async () => {
+    const h = harness();
+    const page = { ...h.page, canPay: vi.fn(async () => true) };
+    page.defer.mockResolvedValue({ confirmed: false });
+    await h.manager.prepare('watch-1', 'seat', expiresAt, page);
+    vi.setSystemTime(new Date(start.getTime() + 12 * 60_000));
+    await h.manager.tick();
+    vi.setSystemTime(expiresAt);
+    await h.manager.tick();
+    expect(h.record().state).toBe('EXPIRED');
+    expect(page.close).toHaveBeenCalledOnce();
+  });
+
+  it('retries a deferral once when the first attempt throws', async () => {
+    const h = harness();
+    h.page.defer.mockRejectedValueOnce(new Error('timeout'));
+    await h.manager.prepare('watch-1', 'seat', expiresAt, h.page);
+    vi.setSystemTime(new Date(start.getTime() + 12 * 60_000));
+    await h.manager.tick();
+    expect(h.page.defer).toHaveBeenCalledTimes(2);
+    expect(h.record().state).toBe('WAITING_AFTER_DEFERRAL');
+  });
+
   it('shortens the deadline when Intercity shortens its clock', async () => {
     const h = harness();
     await h.manager.prepare('watch-1', 'seat', expiresAt, h.page);

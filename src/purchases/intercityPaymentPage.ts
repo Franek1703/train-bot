@@ -1,4 +1,7 @@
+import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
 import type { Browser, Locator, Page } from 'playwright';
+import { env } from '../config/env.js';
 import { extractSeatAssignment } from '../checker/parser.js';
 import type { PaymentObservation, PurchasePage } from './types.js';
 import { PaymentNotSubmittedError, PurchasePreparationError } from './types.js';
@@ -9,6 +12,10 @@ interface BookingExpectation {
   trainNumber: string | null; departureTime: string | null; travelClass: number; passengers: number;
   travelDate?: Date; origin?: string; destination?: string;
 }
+
+// On "Moje bilety" an unpaid transaction is paid with a "BLIK" button; older layouts used "Zapłać".
+const deferredPayName = /^(?:blik|zapłać(?:\s+teraz)?(?:\s+[\d\s]+[,.]\d{2}\s*zł)?)$/i;
+const orderNumberPattern = /(?:numer zamówienia|nr zamówienia|numer transakcji)\s*:?\s*([\w/-]+)/i;
 
 const months = ['stycznia', 'lutego', 'marca', 'kwietnia', 'maja', 'czerwca', 'lipca', 'sierpnia', 'września', 'października', 'listopada', 'grudnia'];
 // Intercity prints single-digit days zero-padded ("06 listopada"), so the leading zero must be optional.
@@ -50,6 +57,8 @@ export class IntercityPaymentPage implements PurchasePage {
   private readonly passenger: Locator;
   private readonly code: Locator;
   private prepared?: { passengerName: string; price: string };
+  // Set when BLIK is paid from the "Moje bilety" order card instead of the checkout form.
+  private orderCardPayment = false;
   readonly remote: IntercityRemotePage;
 
   constructor(private readonly page: Page, private readonly browser: Browser, private readonly seatAssignment: string, private readonly expected?: BookingExpectation) {
@@ -158,12 +167,18 @@ export class IntercityPaymentPage implements PurchasePage {
       .and(this.page.locator('button:not([disabled]):not([aria-disabled="true"])')).filter({ visible: true });
     try {
       const text = await this.body();
-      this.verifyBooking(text);
-      const method = this.page.getByLabel(/^BLIK$/i).and(this.page.locator('input[type="radio"]')).first();
-      if (!await method.isChecked()) throw new Error('Changed payment method');
-      if (!this.prepared || this.priceFromText(text) !== this.prepared.price
-        || (await this.passenger.inputValue()).trim() !== this.prepared.passengerName) {
-        throw new Error('Changed payment details');
+      if (this.orderCardPayment) {
+        if (!this.prepared || !this.matchesDeferredOrder(text) || !text.replace(/\s/g, '').includes(this.prepared.price)) {
+          throw new Error('Changed payment details');
+        }
+      } else {
+        this.verifyBooking(text);
+        const method = this.page.getByLabel(/^BLIK$/i).and(this.page.locator('input[type="radio"]')).first();
+        if (!await method.isChecked()) throw new Error('Changed payment method');
+        if (!this.prepared || this.priceFromText(text) !== this.prepared.price
+          || (await this.passenger.inputValue()).trim() !== this.prepared.passengerName) {
+          throw new Error('Changed payment details');
+        }
       }
       await this.code.fill(code);
       await this.code.blur();
@@ -190,10 +205,15 @@ export class IntercityPaymentPage implements PurchasePage {
   async observe(): Promise<PaymentObservation> {
     const text = await this.body();
     const expiresAt = expiryFromText(text);
-    const orderNumber = text.match(/(?:numer zamówienia|nr zamówienia)\s*:?\s*([\w/-]+)/i)?.[1];
+    const orderNumber = text.match(orderNumberPattern)?.[1];
     // A payment request, redirect, or bank authorisation prompt is not a purchased ticket.
-    if (this.submitted && /(?:płatność zakończona pomyślnie|płatność została zrealizowana|bilet został zakupiony|zakup zakończony pomyślnie)/i.test(text)) {
+    if (this.submitted && /(?:płatność zakończona pomyślnie|płatność została zrealizowana|bilet został zakupiony|zakup zakończony pomyślnie|dziękujemy za zakup)/i.test(text)) {
       return { outcome: 'paid', orderNumber, intercityUrl: pageLink(this.page) };
+    }
+    // Intercity may land on "Moje bilety": a ticket number on this train's card proves the purchase.
+    if (this.submitted && /numer biletu/i.test(text)) {
+      const ticketNumber = await this.purchasedTicket();
+      if (ticketNumber) return { outcome: 'paid', orderNumber: ticketNumber, intercityUrl: pageLink(this.page) };
     }
     if (/czas (?:na zakup|rezerwacji).*?(?:minął|upłynął)|sesja (?:wygasła|zakończona)|rezerwacja wygasła/i.test(text)) {
       return { outcome: 'expired' };
@@ -226,9 +246,27 @@ export class IntercityPaymentPage implements PurchasePage {
       && (!this.expected.destination || stationText(text).includes(stationText(this.expected.destination)));
   }
 
+  // The ticket card for the expected train on "Moje bilety" (not an unpaid transaction).
+  private async purchasedTicket(): Promise<string | undefined> {
+    const cards = this.page.locator('div, li, article, section')
+      .filter({ hasText: /numer biletu/i }).filter({ hasNotText: /nieopłacon/i });
+    let best: string | undefined;
+    const count = Math.min(await cards.count(), 150);
+    for (let i = 0; i < count; i++) {
+      const text = await cards.nth(i).innerText({ timeout: 2_000 }).catch(() => '');
+      if (!this.matchesDeferredOrder(text)) continue;
+      if (!best || text.length < best.length) best = text;
+    }
+    // Several tickets in the smallest matching container means it is a list, not this train's card.
+    if (!best || (best.match(/numer biletu/gi) ?? []).length !== 1) return undefined;
+    return best.match(/numer biletu\s*:?\s*([A-Z0-9/-]+)/i)?.[1];
+  }
+
+  async diagnose(label: string): Promise<void> { await this.saveDiagnostic(label); }
+
   private async deferredOrder(orderNumber?: string | null): Promise<{ container: Locator; button: Locator } | undefined> {
-    const buttons = this.page.getByRole('button', { name: /^zapłać(?:\s+teraz)?$/i })
-      .or(this.page.getByRole('link', { name: /^zapłać(?:\s+teraz)?$/i }));
+    const buttons = this.page.getByRole('button', { name: deferredPayName })
+      .or(this.page.getByRole('link', { name: deferredPayName }));
     const matches: Array<{ container: Locator; button: Locator }> = [];
     for (let i = 0; i < await buttons.count(); i++) {
       const button = buttons.nth(i);
@@ -240,8 +278,8 @@ export class IntercityPaymentPage implements PurchasePage {
         if (this.matchesDeferredOrder(text, orderNumber)) {
           if (await container.getByLabel(/kod blik/i).or(container.getByPlaceholder(/wpisz kod blik/i)).filter({ visible: true }).count()) break;
           // A page containing multiple orders is not an identifiable order card.
-          const payButtons = container.getByRole('button', { name: /^zapłać(?:\s+teraz)?$/i })
-            .or(container.getByRole('link', { name: /^zapłać(?:\s+teraz)?$/i }));
+          const payButtons = container.getByRole('button', { name: deferredPayName })
+            .or(container.getByRole('link', { name: deferredPayName }));
           if (await payButtons.count() === 1) matches.push({ container, button });
           break;
         }
@@ -258,35 +296,104 @@ export class IntercityPaymentPage implements PurchasePage {
     }
     const order = await this.deferredOrder(orderNumber);
     if (!order) throw new PurchasePreparationError('Nie znaleziono właściwego zamówienia oczekującego na płatność.');
+    const orderText = await order.container.innerText().catch(() => '');
     await order.button.click();
     await this.passenger.or(this.page.getByRole('button', { name: /^płatność$/i })
-      .and(this.page.locator('button:not([disabled]):not([aria-disabled="true"])'))).filter({ visible: true }).first().waitFor({ state: 'visible', timeout: 15_000 });
-    const details = await this.passenger.isVisible().catch(() => false) ? await this.preparePaymentForm() : await this.prepare();
-    return { expiresAt: details.expiresAt };
+      .and(this.page.locator('button:not([disabled]):not([aria-disabled="true"])'))).or(this.code)
+      .filter({ visible: true }).first().waitFor({ state: 'visible', timeout: 20_000 });
+    await this.saveDiagnostic('resume-deferred');
+    if (await this.passenger.isVisible().catch(() => false)) return { expiresAt: (await this.preparePaymentForm()).expiresAt };
+    if (!await this.code.isVisible().catch(() => false)) return { expiresAt: (await this.prepare()).expiresAt };
+    // BLIK opened straight from the "Moje bilety" order card: no seat summary on this page,
+    // so check the identified order and amount instead.
+    const price = this.prepared?.price;
+    if (!price || !orderText.replace(/\s/g, '').includes(price)) {
+      throw new PurchasePreparationError('Kwota odroczonego zamówienia nie zgadza się z przygotowanym zakupem.');
+    }
+    this.orderCardPayment = true;
+    return { expiresAt: expiryFromText(orderText) };
   }
 
+  async canPay(): Promise<boolean> {
+    if (this.submitted) return false;
+    // Close a leftover "Zapłać później" modal so the code field is reachable.
+    if (await this.deferProceedButton().isVisible().catch(() => false)) await this.page.keyboard.press('Escape').catch(() => {});
+    return this.code.isVisible().catch(() => false);
+  }
+
+  private deferProceedButton(): Locator {
+    const name = /przejdź do oczekujących/i;
+    return this.page.getByRole('button', { name }).or(this.page.getByRole('link', { name })).filter({ visible: true }).first();
+  }
+
+  private async saveDiagnostic(label: string): Promise<void> {
+    // Watch id is available at runtime: the checker passes the full watch as the expectation.
+    const watchId = (this.expected as { id?: string } | undefined)?.id ?? 'purchase';
+    try {
+      // Diagnostics must never interrupt a purchase.
+      const dir = path.join(env.SCREENSHOTS_DIR, watchId);
+      const file = path.join(dir, `${label}-${Date.now()}.png`);
+      await mkdir(dir, { recursive: true });
+      await this.page.screenshot({ path: file, fullPage: true });
+      const body = (await this.body().catch(() => '')).replace(/\s+/g, ' ').slice(0, 1500);
+      console.log(JSON.stringify({ level: 'info', message: 'Deferral diagnostic saved', label, screenshotPath: file, url: pageLink(this.page), bodyPreview: body }));
+    } catch {
+      console.error(JSON.stringify({ level: 'error', message: 'Could not save deferral diagnostic', label }));
+    }
+  }
+
+  // Resumable: a retry continues from the modal or from the pending-orders page.
   async defer() {
     if (this.submitted) return { confirmed: false };
     this.remote.invalidate();
-    const proceed = this.page.getByRole('button', { name: /^przejdź do oczekujących na płatność$/i });
-    if (!await proceed.isVisible().catch(() => false)) {
-      const button = this.page.getByRole('button', { name: /^zapłać później$/i });
-      if (!await button.isVisible().catch(() => false) || !await button.isEnabled()) return { confirmed: false };
-      await button.click();
+    try {
+      return await this.deferSteps();
+    } catch (error) {
+      await this.saveDiagnostic('defer-error');
+      throw error;
     }
-    await proceed.waitFor({ state: 'visible', timeout: 15_000 });
-    await proceed.click();
-    await proceed.waitFor({ state: 'hidden', timeout: 15_000 });
+  }
+
+  private async deferSteps() {
+    const proceed = this.deferProceedButton();
+    const pendingHeading = this.page.getByRole('heading', { name: /oczekując\w* na płatność/i }).filter({ visible: true }).first();
     // Confirm using an explicit result; disappearing buttons alone prove nothing.
-    const confirmation = this.page.getByText(/(?:zamówienie zostało zapisane|płatność została odroczona|zamówienie oczekuje na płatność|bilet oczekuje na (?:opłacenie|płatność))/i).first();
-    await confirmation.or(this.page.getByRole('heading', { name: /^oczekujące na płatność$/i })).first().waitFor({ state: 'visible', timeout: 15_000 });
+    const confirmation = this.page.getByText(/(?:zamówienie zostało zapisane|płatność została odroczona|zamówienie oczekuje na płatność|bilet oczekuje na (?:opłacenie|płatność))/i).filter({ visible: true }).first();
+    // Intercity now lands on "Moje bilety", listing the order as "Transakcja nieopłacona".
+    // That text alone may belong to another order, so it only ends the wait; the order card confirms.
+    const pendingList = this.page.getByText(/transakcja nieopłacona/i).filter({ visible: true }).first();
+    const pendingPage = pendingHeading.or(pendingList);
+    const alreadyPending = await pendingPage.or(confirmation).first().isVisible().catch(() => false);
+    if (!alreadyPending) {
+      if (!await proceed.isVisible().catch(() => false)) {
+        const later = /^zapłać później$/i;
+        const button = this.page.getByRole('button', { name: later }).or(this.page.getByRole('link', { name: later }))
+          .filter({ visible: true }).first();
+        if (!await button.isVisible().catch(() => false) || !await button.isEnabled().catch(() => false)) {
+          await this.saveDiagnostic('defer-no-button');
+          return { confirmed: false };
+        }
+        await button.click();
+        await proceed.or(pendingPage).or(confirmation).first().waitFor({ state: 'visible', timeout: 30_000 });
+      }
+      if (await proceed.isVisible().catch(() => false)) {
+        await proceed.click();
+        await proceed.waitFor({ state: 'hidden', timeout: 30_000 }).catch(() => {});
+      }
+      await confirmation.or(pendingPage).first().waitFor({ state: 'visible', timeout: 30_000 });
+      // Pending orders load after the heading.
+      await this.page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
+    }
     const order = await this.deferredOrder();
-    if (!order && !await confirmation.isVisible()) return { confirmed: false };
+    if (!order && !await confirmation.isVisible()) {
+      await this.saveDiagnostic('defer-unconfirmed');
+      return { confirmed: false };
+    }
     const orderText = order ? await order.container.innerText() : '';
     const text = await this.body();
     return {
       confirmed: true, intercityUrl: pageLink(this.page),
-      orderNumber: (orderText || text).match(/(?:numer zamówienia|nr zamówienia)\s*:?\s*([\w/-]+)/i)?.[1],
+      orderNumber: (orderText || text).match(orderNumberPattern)?.[1],
       expiresAt: order ? expiryFromText(orderText) : undefined,
     };
   }

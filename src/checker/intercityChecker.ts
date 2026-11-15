@@ -11,6 +11,8 @@ import type { AvailabilityChecker, AvailabilityResult } from './types.js';
 import { purchaseManager } from '../purchases/index.js';
 import { IntercityPaymentPage, readReservationExpiry } from '../purchases/intercityPaymentPage.js';
 
+class ClassSoldOutError extends Error {}
+
 export class PlaywrightIntercityChecker implements AvailabilityChecker {
   async checkAvailability(watch: Watch): Promise<AvailabilityResult> {
     const startedAt = Date.now();
@@ -159,6 +161,19 @@ export class PlaywrightIntercityChecker implements AvailabilityChecker {
         durationMs: Date.now() - startedAt,
       });
     } catch (error) {
+      if (error instanceof ClassSoldOutError) {
+        const soldOutScreenshotPath = await savePageScreenshot(page, watch.id, 'class-sold-out');
+        logInfo('Travel class is sold out for every fare', { watchId: watch.id, travelClass: watch.travelClass });
+        return resultFromStatus('SOLD_OUT', {
+          trainNumber: watch.trainNumber ?? undefined,
+          departureTime: watch.departureTime ?? undefined,
+          purchaseUrl: page.url(),
+          rawStatus: error.message,
+          rawPayload: { currentUrl: page.url() },
+          screenshotPath: soldOutScreenshotPath,
+          durationMs: Date.now() - startedAt,
+        });
+      }
       const diagnostic = await captureFailureDiagnostic(page, watch.id);
       const errorMessage = error instanceof Error ? error.message : String(error);
 
@@ -243,6 +258,9 @@ async function selectConnection(page: Page, watch: Watch): Promise<string | unde
   });
 
   if (!buyButton) {
+    if (await hasUnavailableTrainCard(page, watch)) {
+      throw new ClassSoldOutError(`${watch.trainNumber} at ${watch.departureTime} is listed with no available class`);
+    }
     throw new Error(
       `Could not find train card for ${watch.trainNumber} at ${watch.departureTime}`,
     );
@@ -290,6 +308,8 @@ export async function findBuyButtonLoadingMore(
 async function loadMoreResults(page: Page, direction: 'later' | 'earlier'): Promise<boolean> {
   const more = page.getByRole('button', { name: direction === 'later' ? /^później$/i : /^wcześniej$/i }).first();
   if (!(await more.isVisible().catch(() => false))) return false;
+  // A disabled PÓŹNIEJ / WCZEŚNIEJ means the end of the day's results.
+  if (!(await more.isEnabled().catch(() => false))) return false;
 
   const buyButtons = page.getByRole('button', { name: /kup bilet/i });
   const before = await buyButtons.count();
@@ -367,7 +387,19 @@ async function findMatchingBuyButton(
 
 async function selectTravelClass(page: Page, watch: Watch): Promise<string | undefined> {
   const classLabel = watch.travelClass === 1 ? /wybierz 1 klasę/i : /wybierz 2 klasę/i;
-  const classButton = page.getByRole('button', { name: classLabel }).first();
+  const classButtons = page.getByRole('button', { name: classLabel });
+  // Each fare (e.g. SuperPromo, standard) has its own class button; a sold-out fare is disabled.
+  const classButton = classButtons
+    .and(page.locator('button:not([disabled]):not([aria-disabled="true"])'))
+    .first();
+
+  if ((await classButtons.count()) > 0) {
+    // Buttons can render disabled for a moment while fares load.
+    await classButton.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {});
+  }
+  if ((await classButtons.count()) > 0 && (await classButton.count()) === 0) {
+    throw new ClassSoldOutError(`All fares for travel class ${watch.travelClass} are unavailable`);
+  }
 
   if ((await classButton.count()) === 0) {
     if (await hasJourneyStep(page)) {
@@ -887,6 +919,31 @@ function logInfo(message: string, context: Record<string, unknown> = {}): void {
 function logError(message: string, context: Record<string, unknown> = {}): void {
   recordCheckLog('error', message, context);
   console.error(JSON.stringify({ level: 'error', message, ...context }));
+}
+
+// A fully sold-out train is still listed, but shows "Niedostępna" for each class and no KUP BILET.
+export function isUnavailableTrainCardText(text: string, trainNumber: string, departureTime: string): boolean {
+  const digits = trainNumber.replace(/\D/g, '');
+  return !!digits && new RegExp(`\\b${digits}\\b`).test(text) && text.includes(departureTime)
+    && /niedostępn/i.test(text) && !/kup bilet/i.test(text);
+}
+
+async function hasUnavailableTrainCard(page: Page, watch: Watch): Promise<boolean> {
+  if (!watch.trainNumber || !watch.departureTime) return false;
+  const digits = watch.trainNumber.replace(/\D/g, '');
+  if (!digits) return false;
+  const candidates = page.locator('div, article, li, section')
+    .filter({ hasText: watch.departureTime })
+    .filter({ hasText: new RegExp(`\\b${digits}\\b`) });
+  // Pick the smallest container holding the train and its class status: the card, not the whole list.
+  let smallest: string | undefined;
+  const count = Math.min(await candidates.count(), 200);
+  for (let index = 0; index < count; index += 1) {
+    const text = await candidates.nth(index).innerText({ timeout: 2_000 }).catch(() => '');
+    if (!/niedostępn|kup bilet/i.test(text)) continue;
+    if (!smallest || text.length < smallest.length) smallest = text;
+  }
+  return !!smallest && isUnavailableTrainCardText(smallest, watch.trainNumber, watch.departureTime);
 }
 
 export function trainNumberRegex(trainNumber: string): RegExp {

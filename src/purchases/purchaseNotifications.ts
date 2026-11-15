@@ -39,8 +39,23 @@ export async function sendPurchaseNotification(session: PurchaseRecord, retry = 
       timeZone: env.TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
     }).format(current.acceptCodeUntil);
+    // Any end without a confirmed purchase: the seat is gone and the watcher is stopped.
+    const released = ['EXPIRED', 'FAILED', 'DEFERRED', 'UNKNOWN'].includes(session.state);
+    const releasedLines = !released ? [] : session.state === 'UNKNOWN' ? [
+      'Bot nie trzyma już tej sesji.',
+      'Sprawdź najpierw „Moje bilety” na koncie Intercity — płatność mogła przejść.',
+      'Jeśli biletu nie ma, wznów watcher w dashboardzie (potwierdź sprawdzenie zamówienia).',
+    ] : session.state === 'DEFERRED' ? [
+      'Bot nie trzyma już tej sesji.',
+      'Nieopłacone zamówienie może jeszcze chwilę czekać w „Moje bilety” na koncie Intercity — zapłać tam, jeśli zdążysz.',
+      'Watcher jest zatrzymany. Możesz go wznowić w dashboardzie.',
+    ] : [
+      'Bot nie trzyma już tej sesji — rezerwacja miejsca została zwolniona.',
+      'Watcher jest zatrzymany. Możesz go wznowić w dashboardzie, a bot znów będzie szukał miejsca.',
+    ];
     const text = [
       deferred ? label : waiting ? 'Miejsce zarezerwowane — podaj kod BLIK w dashboardzie.' : label,
+      ...releasedLines,
       `${current.watch.trainNumber ?? ''}: ${current.watch.origin} → ${current.watch.destination}`,
       `Podróż: ${current.watch.travelDate.toISOString().slice(0, 10)} ${current.watch.departureTime ?? ''}`,
       `Podróżny: ${current.passengerName ?? '—'}`,
@@ -56,7 +71,9 @@ export async function sendPurchaseNotification(session: PurchaseRecord, retry = 
     if (!env.RESEND_API_KEY || !env.EMAIL_FROM || !target) throw new Error('Brak konfiguracji maila');
     const result = await new Resend(env.RESEND_API_KEY).emails.send({
       from: env.EMAIL_FROM, to: target,
-      subject: `${deferred ? 'Płatność odroczona — strona bota jest dostępna' : waiting ? 'BLIK — miejsce czeka' : label} · ${current.watch.trainNumber ?? 'Intercity'}`,
+      subject: `${deferred ? 'Płatność odroczona — strona bota jest dostępna' : waiting ? 'BLIK — miejsce czeka'
+        : session.state === 'UNKNOWN' ? 'Sprawdź zakup na koncie Intercity'
+        : released ? 'Sesja zakończona — wznów watcher w dashboardzie' : label} · ${current.watch.trainNumber ?? 'Intercity'}`,
       text,
     }, { idempotencyKey: eventKey });
     await prisma.notification.create({ data: {
